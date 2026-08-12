@@ -1,0 +1,45 @@
+# 密钥与本地配置（切勿提交真实密钥）
+.env
+data/bili/cookie.json
+xhs-cookies.json
+
+# 依赖与构建产物
+node_modules/
+dist/
+
+# 日志
+*.log
+*.err
+
+# 业务与向量数据库（运行时数据，切勿提交）
+*.db
+*.sqlite3
+*.sqlite
+*.bak*
+
+# 临时调试脚本（下划线前缀）
+_*
+server/_*
+src/_*
+
+# 运行时数据目录
+data/
+rag_sources/
+bili_notes/
+tmp_*/
+tmp_*/
+
+# 无效/缓存文件
+server/{}
+server/__pycache__/
+__pycache__/
+
+# IDE / 工具元数据
+.workbuddy/
+.import-loop.lock
+.import.lock
+
+# 测试产物
+*.out
+*.txt
+*.out.txt

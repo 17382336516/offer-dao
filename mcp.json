@@ -1,0 +1,20 @@
+{
+  "mcpServers": {
+    "xiaohongshu-mcp": {
+      "url": "http://localhost:18060/mcp",
+      "description": "小红书 MCP Server - 支持搜索笔记、获取详情、发布内容等功能",
+      "headers": {
+        "Content-Type": "application/json",
+        "Accept": "application/json, text/event-stream"
+      }
+    },
+    "boss-jobs": {
+      "command": "npx",
+      "args": ["-y", "mcp-jobs"],
+      "env": {
+        "CRAWLER_HEADLESS": "true"
+      },
+      "description": "Boss 直聘 / 猎聘 / 智联 / 51job 职位搜索 MCP，支持搜索职位、获取职位详情、总结技能要求"
+    }
+  }
+}
