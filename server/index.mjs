@@ -394,8 +394,10 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_ln_task_id ON learning_notes(task_id);
   CREATE INDEX IF NOT EXISTS idx_mr_plan_id ON matched_resources(plan_id);
   CREATE INDEX IF NOT EXISTS idx_mr_skill_id ON matched_resources(skill_id);
-  try { db.exec('ALTER TABLE learning_notes ADD COLUMN stage TEXT'); } catch { /* 列已存在则忽略 */ }
 `);
+
+// SQLite 生产环境执行迁移；JSON 兼容数据库会安全忽略该语句。
+try { db.exec('ALTER TABLE learning_notes ADD COLUMN stage TEXT'); } catch { /* 列已存在则忽略 */ }
 
 // 兼容旧库：新增列（以 JSON 数组形式存储多选方向 / 小红书帖子）
 try { db.exec('ALTER TABLE profiles ADD COLUMN directions TEXT'); } catch { /* 列已存在则忽略 */ }
