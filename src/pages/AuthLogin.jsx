@@ -101,23 +101,6 @@ function AuthLogin() {
     }
   };
 
-  const handleDemoLogin = async () => {
-    setIsLoading(true);
-    setError('');
-    try {
-      try {
-        await login('demo', 'demo123');
-      } catch {
-        await register('demo', 'demo123');
-      }
-      await loadProfileAndGo('/dashboard'); // 演示登录后直接进入主页
-    } catch (err) {
-      setError(err.message);
-    } finally {
-      setIsLoading(false);
-    }
-  };
-
   const isRegister = mode === 'register';
 
   return (
@@ -253,15 +236,6 @@ function AuthLogin() {
                 <button className="flex items-center justify-center gap-2 py-3 rounded-xl border border-gray-200 bg-white hover:bg-gray-50 transition-colors text-gray-700">
                   <Mail className="w-5 h-5" />
                   邮箱
-                </button>
-              </div>
-
-              <div className="mt-6 text-center">
-                <button
-                  onClick={handleDemoLogin}
-                  className="text-sm text-gray-500 hover:text-mint transition-colors"
-                >
-                  {isLoading ? '加载中...' : '👀 演示模式，直接进入'}
                 </button>
               </div>
             </>
