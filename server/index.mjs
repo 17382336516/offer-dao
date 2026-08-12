@@ -491,6 +491,35 @@ function buildPlanId(userId) {
   return `plan_${userId}`;
 }
 
+// 从本次小红书/面经帖提取个性化搜索词（用于能力地图第三级）。
+// 简单可靠的中文关键词提取：按标点/空白切片，过滤停用词与极短词，保留 2-8 字短语。
+const SEARCH_TERM_STOP = new Set([
+  '的', '了', '是', '在', '我', '你', '他', '她', '它', '们', '和', '与', '及', '或', '也', '都', '就', '而', '把', '被', '让', '给',
+  '怎么', '如何', '什么', '为什么', '哪些', '这个', '那个', '一个', '一种', '可以', '需要', '应该', '就是', '因为', '所以', '但是', '如果', '而且',
+  '面试', '产品经理', '经验', '分享', '笔记', '总结', '干货', '建议', '收藏', '关注', '转载', '原文', '版权', '声明', '举报', '评论', '点赞', '转发',
+]);
+function extractSearchTerms(posts) {
+  const terms = new Map();
+  const raw = Array.isArray(posts) ? posts : [];
+  for (const p of raw) {
+    const text = [p?.title, p?.content, p?.ocrText].filter(Boolean).join(' ');
+    if (!text) continue;
+    // 按常见分隔符切片
+    const chunks = String(text)
+      .split(/[\s,，。.!！?？、；;：:""''（）()【】\[\]~\-—/\\|]+/)
+      .map((s) => s.trim())
+      .filter((s) => s.length >= 2 && s.length <= 8 && !SEARCH_TERM_STOP.has(s) && !/^\d+$/.test(s));
+    for (const c of chunks) {
+      // 出现频率加权，保留更相关的词
+      terms.set(c, (terms.get(c) || 0) + 1);
+    }
+  }
+  // 取出现次数 >=2 或总词数较少时取 Top 12，作为该用户个性化搜索词
+  const sorted = [...terms.entries()].sort((a, b) => b[1] - a[1]);
+  const top = sorted.length > 12 ? sorted.slice(0, 12) : sorted;
+  return top.map(([t]) => t);
+}
+
 function ensureAdminUser() {
   const row = db.prepare('SELECT id FROM users WHERE username = ?').get(ADMIN_USERNAME);
   if (row) {
@@ -1502,10 +1531,24 @@ const server = http.createServer(async (req, res) => {
           console.warn('[mvp/plan] 资源缓存写入失败（不影响计划生成）:', e.message);
         }
 
+        // ---- 步骤 5.7：从本次小红书/面经帖提取个性化搜索词，挂到 skillTree，供能力地图渲染 ----
+        // 新用户未绑定小红书（无 posts）时 trendTerms 为空 -> 能力地图搜索词也为空（个性化空白）。
+        const trendTerms = extractSearchTerms(posts);
+        const enrichedSkills = (skillTree.skills || []).map((s) => ({
+          ...s,
+          searchTerms: Array.from(new Set([s.searchIntent, ...trendTerms].filter(Boolean))),
+        }));
+
         const result = {
           ...stagePlan,
           planType: 'stage_only', // 明确标记：不含每日计划
-          skillTree: { job: skillTree.job, categories: skillTree.categories, skills: skillTree.skills, normalized_skill_dependencies: skillTree.normalized_skill_dependencies },
+          skillTree: {
+            job: skillTree.job,
+            categories: skillTree.categories,
+            skills: enrichedSkills,
+            normalized_skill_dependencies: skillTree.normalized_skill_dependencies,
+            trendTerms, // 本次小红书/面经相关搜索词（用户个性化）
+          },
           resourcePool: { pdf: matched.pdfResources, videos: matched.videoResources },
           coverage: matched.coverage,
           xhsFallback,          // 本次是否因小红书不可用而降级
@@ -1724,58 +1767,57 @@ const server = http.createServer(async (req, res) => {
     // 三级搜索词由 mergeBiliKeywords 生成（固定意图词，趋势词仅在运行时动态追加，不进树结构）。
     if (pathname === '/api/skill-tree' && req.method === 'GET') {
       try {
-        const stageMap = skillNormalizer.AI_PM_STAGE_MAP || [];
-        const skillMap = skillNormalizer.AI_PM_SKILL_MAP || [];
+        const userId = requireUserId(req, res); if (!userId) return;
         const job = url.searchParams.get('job') || 'AI产品经理';
-        // 读取已持久化的小红书趋势词，转成 mergeBiliKeywords 期望的 trends 结构，
-        // 让前端技能树也能按技能名匹配、显示随小红书变化的橙色趋势词（全阶段通用，不只阶段三）。
-        // 注意：db.mjs 在 JSON 模式下 xhs_trend_keywords 是内存数组（非 SQL），故直接读 db.state.tables。
-        let xhsTrends = [];
-        try {
-          let rows = [];
-          if (db.state && db.state.tables && Array.isArray(db.state.tables.xhs_trend_keywords)) {
-            rows = db.state.tables.xhs_trend_keywords;
-          } else {
-            rows = plan.loadXhsTrends(db);
-          }
-          xhsTrends = rows.map((r) => {
-            // db.mjs 在 JSON 模式下，xhs_trend_keywords 每行是 { keyword: [数组] }，
-            // 数组顺序：[keyword, skill, total_count, recent_count, last_seen, relevance_score, trend_score, source, created_at]；
-            // 同时兼容 SQL 模式的对象格式（r.keyword 为字符串）。
-            const arr = Array.isArray(r.keyword) ? r.keyword : null;
+        // 能力地图改为「按用户、随学习计划个性化生成」：
+        // 新用户（无学习计划）返回空 stages，前端显示空白提示；
+        // 老用户从其 learning_plans.data.skillTree 读取个性化能力地图（含本次小红书/面经搜索词）。
+        const planRow = db.prepare('SELECT data FROM learning_plans WHERE user_id = ?').get(userId);
+        let planData = null;
+        try { planData = planRow && planRow.data ? JSON.parse(planRow.data) : null; } catch { planData = null; }
+        const tree = planData && planData.skillTree ? planData.skillTree : null;
+        if (!tree || !Array.isArray(tree.skills) || !tree.skills.length) {
+          // 新用户 / 尚未生成学习计划 -> 空白能力地图
+          return sendJson(res, 200, {
+            ok: true,
+            job,
+            generatedAt: Date.now(),
+            empty: true,
+            stageCount: 0,
+            skillCount: 0,
+            stages: [],
+          });
+        }
+        // 用 skillTree 的 skills 构建 stages（按 stage 分组，保持固定阶段骨架）
+        const stageMap = skillNormalizer.AI_PM_STAGE_MAP || [];
+        const skillsByStage = {};
+        for (const s of tree.skills) {
+          const st = s.stage || '其他';
+          (skillsByStage[st] = skillsByStage[st] || []).push(s);
+        }
+        const orderedStages = (stageMap.length ? stageMap : [{ stage: '其他', searchIntent: '' }])
+          .map((si) => si.stage)
+          .concat(Object.keys(skillsByStage).filter((st) => !(stageMap.find((m) => m.stage === st))));
+        const stages = orderedStages.map((stageName, idx) => {
+          const skills = (skillsByStage[stageName] || []).map((s) => {
+            const terms = Array.isArray(s.searchTerms) ? s.searchTerms : [];
             return {
-              keyword: arr ? arr[0] : r.keyword,
-              skill: arr ? arr[1] : r.skill,
-              trendScore: Number(arr ? (arr[3] || arr[2] || arr[6] || 0) : (r.recent_count || r.total_count || r.trend_score || 0)),
-              source: arr ? arr[7] : r.source,
+              skillName: s.standard_name || s.name,
+              category: s.category,
+              level: s.level,
+              weight: s.weight,
+              // 个性化搜索词（来自本次小红书/面经），渲染为趋势词样式
+              keywords: terms.map((t) => ({ keyword: t, intent: 'trend', isTrend: true })),
             };
           });
-        } catch (e) {
-          console.warn('[skill-tree] 读取小红书趋势词失败，按纯固定词展示:', e.message);
-        }
-        const stages = stageMap.map((stageItem, idx) => {
-          const skills = skillMap
-            .filter((s) => s.stage === stageItem.stage)
-            .map((s) => {
-              const kws = skillResourceMatcher.mergeBiliKeywords(
-                { name: s.skillName }, job, xhsTrends, {}
-              );
-              return {
-                skillName: s.skillName,
-                category: s.category,
-                level: s.level,
-                weight: s.weight,
-                keywords: kws.map((k) => ({ keyword: k.keyword, intent: k.intent, isTrend: k.isTrend })),
-              };
-            });
           return {
-            stage: stageItem.stage,
+            stage: stageName,
             order: idx + 1,
-            description: stageItem.searchIntent || '',
+            description: (stageMap.find((m) => m.stage === stageName) || {}).searchIntent || '',
             skillCount: skills.length,
             skills,
           };
-        });
+        }).filter((st) => st.skills.length);
         const totalSkills = stages.reduce((sum, st) => sum + st.skills.length, 0);
         return sendJson(res, 200, {
           ok: true,

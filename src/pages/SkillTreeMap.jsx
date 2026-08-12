@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Loader2, ChevronDown } from 'lucide-react';
+import { Loader2, ChevronDown, Sparkles } from 'lucide-react';
 
 // ============ 尺寸与配色常量（XMind + Notion 低饱和风格） ============
 const ROOT_W = 160, ROOT_H = 70;
@@ -132,7 +132,12 @@ export default function SkillTreeMap({ stages, loading, error }) {
     return <div className="card p-5 text-sm text-red-500">⚠️ {error}</div>;
   }
   if (!stages || !stages.length) {
-    return <div className="card p-5 text-sm text-gray-400">暂无能力地图数据。</div>;
+    return (
+      <div className="card p-6 text-sm text-gray-400 flex flex-col items-center gap-2 text-center">
+        <Sparkles className="w-5 h-5 text-gray-300" />
+        暂无能力地图，请先生成学习计划
+      </div>
+    );
   }
 
   const { models, totalHeight, rootCenterY } = buildModel(stages);

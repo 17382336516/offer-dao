@@ -2485,7 +2485,7 @@ export async function getXhsQrcodeForBind() {
     // 说明本机已有一个待绑定的登录会话（通常是用户刚扫的码）。此时不报错，
     // 而是返回 alreadyLoggedIn，让前端直接走 bindXhs() 把该全局会话绑定到当前用户，
     // 避免「未获取到登录二维码」的死胡同，也符合「扫码后自动绑定」的预期。
-    return { image: '', browserLogin: true, loggedIn: false, text: data.text || '请在登录页完成本次登录后等待系统确认' };
+    return { image: '', alreadyLoggedIn: true, loggedIn: false, text: data.text || '检测到已有登录会话，正在为你绑定当前账号' };
   }
   return { image: data.image, text: data.text, loggedIn: false };
 }
