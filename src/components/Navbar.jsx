@@ -16,6 +16,7 @@ import {
   X,
 } from 'lucide-react';
 import { getProfile, getXhsQrcode, getXhsStatus, logout } from '../lib/api';
+import VipBadge from './VipBadge';
 
 const userSections = [
   {
@@ -146,6 +147,8 @@ export default function Navbar() {
       </div>
 
       <div className="p-3 border-t border-gray-100 space-y-2">
+        <VipBadge />
+
         <button
           onClick={handleLogout}
           className="w-full flex items-center justify-center gap-2 px-3 py-2.5 rounded-xl text-sm font-medium text-red-500 hover:bg-red-50 transition-colors"

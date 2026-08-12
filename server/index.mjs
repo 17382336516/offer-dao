@@ -1008,7 +1008,8 @@ async function handleRegister(body, res) {
   );
   const userId = Number(info.lastInsertRowid);
   const token = createSession(userId);
-  sendJson(res, 201, { token, user: { id: userId, username, role: 'user', tier: 'normal' } });
+  // 前端会员状态：复用 users.tier（normal/member），映射为 isVip 布尔，不新增字段
+  sendJson(res, 201, { token, user: { id: userId, username, role: 'user', tier: 'normal', isVip: false } });
 }
 
 async function handleLogin(body, res) {
@@ -1019,7 +1020,8 @@ async function handleLogin(body, res) {
     return sendJson(res, 401, { error: '用户名或密码错误' });
   }
   const token = createSession(user.id);
-  sendJson(res, 200, { token, user: { id: user.id, username: user.username, role: user.role || 'user', tier: user.tier || 'normal' } });
+  const tier = user.tier || 'normal';
+  sendJson(res, 200, { token, user: { id: user.id, username: user.username, role: user.role || 'user', tier, isVip: tier === 'member' } });
 }
 
 function getProfile(userId) {
@@ -1191,6 +1193,10 @@ async function handleGetProfile(req, res) {
   profile.days = deriveDays(profile);
   profile.daysFromStart = daysFromStart(profile.startDate);
   profile.totalStudyDays = totalStudyDays(profile.startDate, profile.targetDate);
+  // 会员状态：复用 users.tier（normal/member），映射为 isVip 布尔，不新增字段、不改用户系统
+  const tier = typeof profile.tier === 'string' ? profile.tier : (profile.isVip ? 'member' : 'normal');
+  profile.tier = tier;
+  profile.isVip = tier === 'member';
   sendJson(res, 200, { profile });
 }
 async function handlePutProfile(req, res) {

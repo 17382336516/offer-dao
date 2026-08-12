@@ -43,12 +43,26 @@ async function apiFetch(path, options = {}) {
   return data;
 }
 
+// 会员状态持久化：登录/注册后写入 localStorage，刷新页面后由 Navbar/弹窗直接读取，避免丢失。
+// 后端 user 含 isVip（由 users.tier 映射），此处只做前端存储，不改动用户系统。
+export function setVipState(isVip) {
+  try { localStorage.setItem('offerToVip', isVip ? '1' : '0'); } catch {}
+}
+export function getVipState() {
+  try { return localStorage.getItem('offerToVip') === '1'; } catch { return false; }
+}
+export function clearVipState() {
+  try { localStorage.removeItem('offerToVip'); } catch {}
+}
+
 export async function register(username, password) {
   const data = await apiFetch('/register', {
     method: 'POST',
     body: JSON.stringify({ username, password }),
   });
   setToken(data.token);
+  if (data.user && typeof data.user.isVip === 'boolean') setVipState(data.user.isVip);
+  else if (data.user && data.user.tier) setVipState(data.user.tier === 'member');
   return data.user;
 }
 
@@ -58,11 +72,14 @@ export async function login(username, password) {
     body: JSON.stringify({ username, password }),
   });
   setToken(data.token);
+  if (data.user && typeof data.user.isVip === 'boolean') setVipState(data.user.isVip);
+  else if (data.user && data.user.tier) setVipState(data.user.tier === 'member');
   return data.user;
 }
 
 export async function logout() {
   setToken('');
+  clearVipState();
 }
 
 // 阶段一：将小红书多路线帖子 -> 结构化岗位学习路线 JSON
