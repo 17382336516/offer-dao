@@ -1,5 +1,6 @@
 // 前端与后端 API 交互的封装：统一处理 token 与会话。
 const TOKEN_KEY = 'offerToToken';
+const API_BASE_URL = String(import.meta.env.VITE_API_BASE_URL || '').replace(/\/$/, '');
 
 export function getToken() {
   return localStorage.getItem(TOKEN_KEY) || '';
@@ -20,7 +21,7 @@ async function apiFetch(path, options = {}) {
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   let res;
   try {
-    res = await fetch(`/api${path}`, { ...options, headers, signal: controller.signal });
+    res = await fetch(`${API_BASE_URL}/api${path}`, { ...options, headers, signal: controller.signal });
   } catch (e) {
     if (e.name === 'AbortError') {
       throw new Error(`请求超时（>${Math.round(timeoutMs / 1000)}s），生成学习计划耗时过长，可能是模型加载或网络异常，请稍后重试`);
