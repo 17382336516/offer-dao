@@ -3843,7 +3843,7 @@ ${ragText}`;
     function loadStagePlanForDaily(userId, planId) {
       // 读取唯一学习路线表 learning_plans（每用户一条），作为每日任务的单一真源。
       let data = null;
-      let row = db.prepare('SELECT data, created_at, days, job FROM learning_plans WHERE user_id = ?').get(userId);
+      let row = db.prepare('SELECT data, created_at, job FROM learning_plans WHERE user_id = ?').get(userId);
       if (row && row.data) {
         try { data = JSON.parse(row.data || '{}'); } catch { data = null; }
       }
