@@ -72,6 +72,17 @@ const computeDaysFromEnd = (dateStr) => {
   return Math.max(1, Math.ceil((end - today) / 86400000));
 };
 
+// 由「开始日 + 学习天数」反推结束日（含首尾，days 天 → 开始日 + (days-1)）
+const addDays = (dateStr, days) => {
+  const d = new Date(dateStr);
+  d.setHours(0, 0, 0, 0);
+  d.setDate(d.getDate() + Math.max(0, days - 1));
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+};
+
 // 小巧的月历：点击具体日期作为学习结束日
 function MiniCalendar({ value, onPick }) {
   const today = new Date();
@@ -195,6 +206,7 @@ function PlanBoard() {
   // 调整计划弹窗内的临时编辑值（点保存才生效，取消则丢弃）
   const [draftEnd, setDraftEnd] = useState(null);
   const [draftStart, setDraftStart] = useState(null);
+  const [draftDays, setDraftDays] = useState(null); // 调整计划弹窗内「学习天数」临时值
   // 保存二次确认弹窗
   const [showSaveConfirm, setShowSaveConfirm] = useState(false);
 
@@ -648,9 +660,10 @@ function PlanBoard() {
           ? '小红书账号已登录，但本次未获取到相关帖子，将使用 RAG 知识库和B站资源生成学习计划。'
           : (data.xhsSkipped ? data.sourceNote : ''));
       }
-      // 生成学习路线成功后自动落库：按当前用户 target_date 推导天数并写入 daily_learning_tasks，
+      // 生成学习路线成功后自动落库：按当前推导的天数（effectiveDays）写入 daily_learning_tasks，
       // 与「调整目标日」走同一落库入口，确保页面与数据库一致；失败明确提示，不静默吞掉。
-      generateDailyPlan({})
+      // 显式把天数传给后端，避免依赖可能缺失的 target_date 兜底写死 30 天。
+      generateDailyPlan({ days: effectiveDays })
         .then(() => { /* 落库成功，下一轮今日计划轮询会刷新 */ })
         .catch((e) => {
           console.error('生成学习路线后自动落库失败:', e.message);
@@ -1172,7 +1185,7 @@ function PlanBoard() {
                 </div>
                 <button
                   type="button"
-                  onClick={() => { setDraftDirections((selectedDirections && selectedDirections.length ? [selectedDirections[0]] : [])); setDraftEnd(endDate); const d = new Date(); const td = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`; setDraftStart(td); setShowAdjust(true); }}
+                  onClick={() => { setDraftDirections((selectedDirections && selectedDirections.length ? [selectedDirections[0]] : [])); setDraftEnd(endDate); const d = new Date(); const td = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`; setDraftStart(td); setDraftDays(days); setShowAdjust(true); }}
                   className="flex items-center gap-1 px-3 py-2 rounded-lg bg-mint/10 text-mint text-sm font-medium hover:bg-mint/20 transition-colors"
                 >
                   <CalendarClock className="w-4 h-4" />
@@ -1234,7 +1247,7 @@ function PlanBoard() {
               </p>
             )}
 
-            {/* ── XMind 风格固定能力地图（板块名 → 技能名 → 搜索词）── */}
+            {/* ── XMind 风格固定能力地图（板块 → 技能）── */}
             <SkillTreeMap stages={treeData?.stages} loading={treeLoading} />
 
             {/* ── 课程与 PDF 列表（保留原排版）── */}
@@ -1482,6 +1495,37 @@ function PlanBoard() {
                 </p>
               </div>
 
+              {/* 学习天数：直接输入 N 天（与选结束日二选一，都驱动每日计划重切） */}
+              <div className="mb-6">
+                <p className="text-sm font-medium text-gray-700 mb-1">⏱️ 或直接设置学习天数</p>
+                <p className="text-xs text-gray-500 mb-3">填入天数后，系统会基于「今天」自动推算结束日并重新切片每日学习计划。若同时选了结束日，以结束日为准。</p>
+                <div className="flex items-center gap-2">
+                  <input
+                    type="number"
+                    min={1}
+                    max={365}
+                    value={draftDays || ''}
+                    onChange={(e) => {
+                      const n = e.target.value ? Math.max(1, parseInt(e.target.value, 10)) : null;
+                      setDraftDays(n);
+                      // 输入天数时同步反推结束日，保证区间展示与目标日一致
+                      if (n && draftStart) {
+                        const end = addDays(draftStart, n);
+                        setDraftEnd(end);
+                      }
+                    }}
+                    placeholder="例如 30"
+                    className="w-32 px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:border-mint"
+                  />
+                  <span className="text-sm text-gray-500">天</span>
+                  {draftStart && draftDays && (
+                    <span className="text-xs text-mint">
+                      推算结束日：{fmtCnDate(addDays(draftStart, draftDays))}
+                    </span>
+                  )}
+                </div>
+              </div>
+
               {/* 目标岗位：单选（与注册「选择岗位方向」一致，只能选 1 个） */}
               <div className="pt-4 border-t border-gray-100">
                 <p className="text-sm font-medium text-gray-700 mb-1">🎯 更改目标岗位（单选，仅 1 个）</p>
@@ -1609,6 +1653,8 @@ function PlanBoard() {
                     const jobChanged = draftDirections.length > 0 &&
                       (selectedDirections.length !== draftDirections.length ||
                         draftDirections.some((d) => !selectedDirections.includes(d)));
+                    // 天数输入框已同步反推 draftEnd，故统一以结束日（含首尾）推导天数；
+                    // 若未选结束日则回退当前 days
                     const newDays = draftEnd ? computeDaysFromEnd(draftEnd) : days;
                     if (jobChanged) {
                       setShowAdjust(false);

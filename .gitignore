@@ -13,6 +13,7 @@ dist/
 
 # 业务与向量数据库（运行时数据，切勿提交）
 *.db
+*.db.*
 *.sqlite3
 *.sqlite
 *.bak*

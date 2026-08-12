@@ -151,9 +151,6 @@ export default function SkillTreeMap({ stages, loading, error }) {
           />
           <h3 className="font-bold text-gray-800 group-hover:text-mint transition-colors">AI 产品经理 · 能力地图</h3>
         </button>
-        <span className="text-xs text-gray-400">
-          {models.length} 大阶段 · {models.reduce((s, m) => s + m.skills.length, 0)} 核心技能 · 每个技能对应 B站 搜索词
-        </span>
       </div>
 
       {!mapCollapsed && (

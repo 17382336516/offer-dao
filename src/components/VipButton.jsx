@@ -2,7 +2,7 @@
 // 未接入支付：点击后仅保留交互状态并提示入口已预留。
 export default function VipButton({ isVip, onAction }) {
   return (
-    <div style={{ padding: '20px 32px 32px', marginTop: 'auto' }}>
+    <div style={{ padding: '16px 32px 24px', marginTop: 'auto' }}>
       <button
         type="button"
         onClick={onAction}

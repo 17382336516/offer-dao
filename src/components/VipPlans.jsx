@@ -8,8 +8,8 @@ const PLANS = [
 
 export default function VipPlans({ selected, onSelect }) {
   return (
-    <div style={{ padding: '8px 32px 4px' }}>
-      <h3 style={{ margin: '0 0 16px', fontSize: 20, fontWeight: 600, color: '#111827' }}>选择会员套餐</h3>
+    <div style={{ padding: '4px 32px 0' }}>
+      <h3 style={{ margin: '0 0 12px', fontSize: 20, fontWeight: 600, color: '#111827' }}>选择会员套餐</h3>
       <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap' }}>
         {PLANS.map((p) => {
           const active = selected === p.id;
@@ -21,7 +21,7 @@ export default function VipPlans({ selected, onSelect }) {
               style={{
                 position: 'relative',
                 width: 220,
-                height: 170,
+                height: 132,
                 flex: '1 1 200px',
                 borderRadius: 16,
                 background: '#FFFFFF',
@@ -53,7 +53,7 @@ export default function VipPlans({ selected, onSelect }) {
               )}
 
               <div style={{ fontSize: 16, fontWeight: 600, color: '#111827' }}>{p.name}</div>
-              <div style={{ fontSize: 28, fontWeight: 700, color: '#111827', margin: '14px 0 8px' }}>{p.price}</div>
+              <div style={{ fontSize: 26, fontWeight: 700, color: '#111827', margin: '10px 0 6px' }}>{p.price}</div>
               <div style={{ fontSize: 13, color: '#6B7280' }}>{p.desc}</div>
 
               {/* 选中态右下角黄色圆形勾选 */}

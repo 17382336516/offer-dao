@@ -1,9 +1,31 @@
 import { useEffect, useState } from 'react';
 import { BookOpen, CalendarDays, Clock3 } from 'lucide-react';
-import { searchInterviewExperience, getInterviewHistory, getXhsQrcode, bindXhs, getXhsStatus } from '../lib/api';
+import { searchInterviewExperience, getInterviewHistory, getInterviewDetail, getXhsQrcode, bindXhs, getXhsStatus } from '../lib/api';
 
 function safeParse(s) {
   try { return JSON.parse(s); } catch { return {}; }
+}
+
+// 可折叠问题项：默认收起答案，点击问题才展开（字体整体偏小）
+function CollapsibleQuestion({ question, children, accent }) {
+  const [open, setOpen] = useState(false);
+  const base = accent
+    ? 'border-amber-100 bg-amber-50/40'
+    : 'border-gray-100';
+  return (
+    <div className={`border ${base} rounded-xl`}>
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        className="w-full flex items-center gap-2 px-3 py-2.5 text-left select-text"
+      >
+        <span className={`text-gray-400 text-xs transition-transform select-none ${open ? 'rotate-90' : ''}`}>▶</span>
+        <span className="font-medium text-gray-800 text-sm flex-1 select-text">{question}</span>
+        <span className="text-[11px] text-gray-400 select-none">{open ? '收起' : '展开'}</span>
+      </button>
+      {open && <div className="px-3 pb-3 text-xs text-gray-600 whitespace-pre-line leading-relaxed select-text">{children}</div>}
+    </div>
+  );
 }
 
 export default function InterviewExperience() {
@@ -23,11 +45,45 @@ export default function InterviewExperience() {
     try {
       const res = await getInterviewHistory();
       setHistory(Array.isArray(res.items) ? res.items : []);
-    } catch { /* 忽略 */ }
+      return Array.isArray(res.items) ? res.items : [];
+    } catch { return []; }
+  };
+
+  // 从个人数据库恢复某次已生成的面经（无需重新调 LLM），保证刷新/切板块回来仍可见
+  const loadDetail = async (sid, searchIndex) => {
+    if (!sid) return;
+    setLoading(true);
+    try {
+      const data = await getInterviewDetail(sid);
+      const sess = data.session || {};
+      const qs = data.questions || {};
+      setResult({
+        company: sess.company,
+        role: sess.role,
+        round: sess.round,
+        searchIndex: searchIndex ?? sess.searchIndex,
+        llmUsed: true,
+        xhsCount: 0,
+        ragCount: 0,
+        isIncremental: false,
+        llmSkipped: false,
+        questions: {
+          basic: qs.basic || [],
+          product: qs.product || [],
+          project: qs.project || [],
+        },
+        incrementSources: [],
+      });
+    } catch { /* 忽略恢复失败 */ }
+    finally { setLoading(false); }
   };
 
   useEffect(() => {
-    loadHistory();
+    (async () => {
+      const items = await loadHistory();
+      // 自动恢复最近一次面经，确保回来/刷新后仍能渲染
+      if (items && items.length) await loadDetail(items[0].id, items[0].searchIndex);
+    })();
   }, []);
 
   // 真正发起面经生成；useLocalOnly=true 时仅用本地面经库（不抓小红书）
@@ -137,9 +193,9 @@ export default function InterviewExperience() {
           {history.length > 0 && (
             <div className="mt-4 flex flex-wrap gap-2">
               <span className="text-xs text-gray-400">历史：</span>
-              {history.slice(0, 8).map((h) => (
-                <button key={h.id} onClick={() => { setCompany(h.company); setRole(h.role); setRound(h.round); }} className="text-xs px-2 py-1 rounded-full bg-gray-100 text-gray-600 hover:bg-gray-200">
-                  {h.company} {h.role} {h.round}{h.searchIndex ? ` · ${h.searchIndex}次` : ''}
+              {history.slice(0, 3).map((h) => (
+                <button key={h.id} onClick={async () => { setCompany(h.company); setRole(h.role); setRound(h.round); await loadDetail(h.id, h.searchIndex); }} className="text-xs px-2 py-1 rounded-full bg-gray-100 text-gray-600 hover:bg-gray-200">
+                  {h.company} {h.role} {h.round}
                 </button>
               ))}
             </div>
@@ -166,75 +222,41 @@ export default function InterviewExperience() {
           <div className="space-y-5">
             <div className="flex flex-wrap items-center gap-3">
               <h3 className="font-bold text-lg text-gray-800">{result.company} {result.role} {result.round}面经</h3>
-              <span className="text-xs px-2 py-1 rounded-full bg-mint/10 text-mint font-semibold">已整理 {result.searchIndex} 次</span>
             </div>
-            <p className="text-xs text-gray-400">
-              本次新增：实时小红书 {result.xhsCount} 篇 · 面经素材 {result.ragCount} 条
-              {result.isIncremental ? ' · 已追加到已有面经' : ' · 首次创建面经'}
-              {result.llmSkipped ? ' · 无新增素材（跳过AI）' : (result.llmUsed ? ' · 已AI整理' : ' · 整理失败')}
-            </p>
-
-            {/* 本次新增来源（增量追踪） */}
-            {result.incrementSources && result.incrementSources.length > 0 && (
-              <div className="card border-mint/30 bg-mint/5">
-                <h4 className="font-semibold text-mint mb-3">第 {result.searchIndex} 次新增来源</h4>
-                <div className="space-y-2">
-                  {result.incrementSources.map((s, i) => {
-                    const meta = typeof s.metadata === 'string' ? safeParse(s.metadata) : (s.metadata || {});
-                    return (
-                      <div key={i} className="text-xs text-gray-600 border border-gray-100 rounded-lg p-3 bg-white">
-                        <span className="inline-block px-1.5 py-0.5 rounded bg-gray-100 text-gray-500 mr-2">
-                          {s.source_type === 'xiaohongshu' ? '小红书' : '面经素材'}
-                        </span>
-                        {s.source_type === 'xiaohongshu' ? (meta.title || '帖子') : '检索到的面经原文片段（已用于生成上方问题）'}
-                        {meta.author ? <span className="text-gray-400 ml-2">— {meta.author}</span> : null}
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
-            )}
 
             {/* 区域1：基础问题（合并全部历史 + 本次新增） */}
             <div className="card">
-              <h4 className="font-semibold text-mint mb-3">基础问题（AI 生成简短回答）</h4>
-              <div className="space-y-3">
+              <h4 className="font-semibold text-mint mb-3 text-sm">基础问题（AI 生成简短回答）</h4>
+              <div className="space-y-2">
                 {(result.questions?.basic || []).map((q, i) => (
-                  <div key={i} className="border border-gray-100 rounded-xl p-4">
-                    <p className="font-medium text-gray-800">{q.question}</p>
-                    <p className="text-sm text-gray-600 mt-2">{q.answer}</p>
-                  </div>
+                  <CollapsibleQuestion key={i} question={q.question}>{q.answer}</CollapsibleQuestion>
                 ))}
-                {(result.questions?.basic || []).length === 0 && <p className="text-sm text-gray-400">暂无</p>}
+                {(result.questions?.basic || []).length === 0 && <p className="text-xs text-gray-400">暂无</p>}
               </div>
             </div>
 
             {/* 区域2：产品设计问题 */}
             <div className="card">
-              <h4 className="font-semibold text-mint mb-3">产品设计问题（输出回答思路框架）</h4>
-              <div className="space-y-3">
+              <h4 className="font-semibold text-mint mb-3 text-sm">产品设计问题（输出回答思路框架）</h4>
+              <div className="space-y-2">
                 {(result.questions?.product || []).map((q, i) => (
-                  <div key={i} className="border border-gray-100 rounded-xl p-4">
-                    <p className="font-medium text-gray-800">{q.question}</p>
-                    <div className="text-sm text-gray-600 mt-2 whitespace-pre-line">{q.framework}</div>
-                  </div>
+                  <CollapsibleQuestion key={i} question={q.question}>{q.framework}</CollapsibleQuestion>
                 ))}
-                {(result.questions?.product || []).length === 0 && <p className="text-sm text-gray-400">暂无</p>}
+                {(result.questions?.product || []).length === 0 && <p className="text-xs text-gray-400">暂无</p>}
               </div>
             </div>
 
             {/* 区域3：项目经历问题 */}
             <div className="card">
-              <h4 className="font-semibold text-mint mb-3">项目经历问题（结合个人经历）</h4>
-              <div className="space-y-3">
+              <h4 className="font-semibold text-mint mb-3 text-sm">项目经历问题（结合个人经历）</h4>
+              <div className="space-y-2">
                 {(result.questions?.project || []).map((q, i) => (
-                  <div key={i} className="border border-amber-100 rounded-xl p-4 bg-amber-50/40">
-                    <p className="font-medium text-gray-800">{q.question}</p>
-                    <p className="text-xs text-amber-600 mt-1">请结合个人经历回答，以下为准备方向：</p>
-                    <div className="text-sm text-gray-600 mt-2 whitespace-pre-line">{q.direction}</div>
-                  </div>
+                  <CollapsibleQuestion key={i} question={q.question} accent>
+                    <p className="text-xs text-amber-600 mb-1">请结合个人经历回答，以下为准备方向：</p>
+                    {q.direction}
+                  </CollapsibleQuestion>
                 ))}
-                {(result.questions?.project || []).length === 0 && <p className="text-sm text-gray-400">暂无</p>}
+                {(result.questions?.project || []).length === 0 && <p className="text-xs text-gray-400">暂无</p>}
               </div>
             </div>
           </div>

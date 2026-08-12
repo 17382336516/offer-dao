@@ -45,8 +45,8 @@ export default function VipModal({ isVip, onClose }) {
         {/* ===== 顶部 Header（110px）===== */}
         <div
           style={{
-            minHeight: 110,
-            padding: '24px 32px',
+            minHeight: 84,
+            padding: '18px 32px',
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'space-between',
@@ -93,7 +93,7 @@ export default function VipModal({ isVip, onClose }) {
 
         {/* ===== 会员用户：当前状态条 ===== */}
         {isVip && (
-          <div style={{ padding: '20px 32px 0' }}>
+          <div style={{ padding: '16px 32px 0' }}>
             <div
               style={{
                 padding: '14px 16px',

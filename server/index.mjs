@@ -1898,6 +1898,8 @@ const server = http.createServer(async (req, res) => {
       }
       try {
         const now = Date.now();
+        // cache 写入统计（提前声明，避免小红书结构化步骤在声明前访问导致 TDZ 报错）
+        const cacheWriteStats = { hit: 0, inserted: 0 };
         // 同一用户 + 公司 + 岗位 + 轮次 = 一次岗位面经（增量累加，不复建）
         let session = db.prepare(`
           SELECT id, company, role, round, created_at FROM interview_sessions
@@ -2093,7 +2095,6 @@ normalized_question 规则（严格遵守，否则视为格式错误）：
         // 缓存 answer 列统一存「可复用内容」：基础=一句话答案、场景=框架、项目=准备方向。
         const TYPE_MAP = { basic: '基础问题', product: '场景问题', project: '项目问题' };
         const cacheHitIds = []; // 实际来自 cache 命中、最终要 +1 hit_count 的 id
-        const cacheWriteStats = { hit: 0, inserted: 0 };
         const enrichFromCache = async (arr, type) => {
           for (const q of (arr || [])) {
             if (!q.question) continue;

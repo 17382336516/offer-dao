@@ -28,18 +28,18 @@ const BENEFITS = [
 
 export default function VipBenefits() {
   return (
-    <div style={{ padding: '24px 32px 8px' }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 16 }}>
+    <div style={{ padding: '18px 32px 4px' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
         <span style={{ fontSize: 18 }}>💎</span>
         <h3 style={{ margin: 0, fontSize: 20, fontWeight: 600, color: '#111827' }}>会员专享权益</h3>
       </div>
 
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
         {BENEFITS.map((b) => (
           <div
             key={b.title}
             style={{
-              height: 82,
+              height: 64,
               width: 'calc(100% - 0px)',
               background: '#fff',
               border: '1px solid #EEEEEE',
