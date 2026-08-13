@@ -618,13 +618,19 @@ export async function generateLearningPlan({ job, skillTree, pdfResources, video
   });
 }
 
-// MVP 主链路：只传岗位，后端跑完 小红书->技能树->标准化->PDF/B站匹配->总体阶段计划
-// 返回的计划只有 stages（阶段级），不含每日任务；资源均为后端回填的真实数据。
+// MVP 主链路（异步任务模式）：提交后立即返回 taskId，后端后台跑，前端轮询进度。
+// 原因：Render 免费版网关 30s 硬超时，原同步链路在云端必然超时被截断。
 export async function generateMvpPlan({ job, xhsPosts = [], force = false }) {
-  return apiFetch('/mvp/plan', {
+  const data = await apiFetch('/mvp/plan', {
     method: 'POST',
     body: JSON.stringify({ job, xhsPosts, force }),
   });
+  return data; // { taskId, status: 'running' }
+}
+
+// 轮询 MVP 计划生成进度。返回 { status: 'running'|'done'|'error', step, progress, result? }
+export async function getMvpPlanProgress(taskId) {
+  return apiFetch(`/mvp/plan/progress?taskId=${encodeURIComponent(taskId)}`, { method: 'GET' });
 }
 
 // 读取当前用户已保存的学习计划（用于进入页面时回显、判断是否首次生成）

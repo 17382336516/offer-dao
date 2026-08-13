@@ -190,6 +190,10 @@ function Plan() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [expanded, setExpanded] = useState(0);
+  // 异步生成进度（0~100）：提交 /api/mvp/plan 后轮询 /progress，展示进度条
+  const [genProgress, setGenProgress] = useState(0);
+  const [genStep, setGenStep] = useState('');
+  const genTimerRef = useRef(null);
 
   // 已保存计划相关：用于「是否首次生成」判断与覆盖确认
   const [savedInfo, setSavedInfo] = useState(null); // { exists, job, created_at }
@@ -238,6 +242,7 @@ function Plan() {
   // 组件卸载时清理二维码轮询定时器，避免内存泄漏
   useEffect(() => () => {
     if (qrTimerRef.current) clearInterval(qrTimerRef.current);
+    if (genTimerRef.current) clearInterval(genTimerRef.current);
   }, []);
 
   // 真正执行生成。
@@ -251,34 +256,58 @@ function Plan() {
     setShowOverwrite(false);
     setShowModeChoice(false);
     setXhsNotice(''); // 清空上次的降级提示
+    setGenProgress(0);
+    setGenStep('提交中');
     try {
-      // MVP 主链路：前端只负责传岗位。
-      // 小红书采集 → 技能树 → 技能标准化 → PDF/B站真实资源匹配 → 总体阶段计划
-      // 全部在后端 /api/mvp/plan 内串行完成，前端不再拼装任何示例/假资源。
       const targetJob = (job || '').trim();
       if (!targetJob) {
         setError('请先填写目标岗位');
         setLoading(false);
         return;
       }
-      const data = await generateMvpPlan({ job: targetJob, force });
-      setPlan(data);
-      setExpanded(0);
-      setSavedInfo({ exists: true, job: data.job || targetJob, created_at: Date.now() });
-      // 后端在小红书实际不可用（MCP 未连通 / 未登录 / 搜索无结果）时返回 fallback 标记，
-      // 主动选择「暂不登录(rag_only)」的除外——那是用户明确知情的纯岗位模式。
-      if (data?.xhsFallback && mode !== 'rag_only') {
-        setXhsNotice(data.xhsError || '本次未获取到小红书数据，已使用纯岗位模式生成计划');
-      }
+      // 提交任务，立即返回 taskId（后端异步执行，绕开 Render 30s 网关限制）
+      const submit = await generateMvpPlan({ job: targetJob, force });
+      if (!submit?.taskId) throw new Error('未获取到任务 ID');
+      // 轮询进度
+      const poll = async () => {
+        const p = await getMvpPlanProgress(submit.taskId);
+        if (p.status === 'done') {
+          clearInterval(genTimerRef.current);
+          setGenProgress(100);
+          setGenStep('');
+          setPlan(p.result);
+          setExpanded(0);
+          setSavedInfo({ exists: true, job: p.result.job || targetJob, created_at: Date.now() });
+          if (p.result?.xhsFallback && mode !== 'rag_only') {
+            setXhsNotice(p.result.xhsError || '本次未获取到小红书数据，已使用纯岗位模式生成计划');
+          }
+          setLoading(false);
+          return;
+        }
+        if (p.status === 'error') {
+          clearInterval(genTimerRef.current);
+          setGenStep('');
+          setError(p.error || '生成失败');
+          setLoading(false);
+          return;
+        }
+        setGenProgress(typeof p.progress === 'number' ? p.progress : 0);
+        setGenStep(p.step || '生成中');
+        // 未结束：继续轮询（interval 已设）
+      };
+      if (genTimerRef.current) clearInterval(genTimerRef.current);
+      genTimerRef.current = setInterval(poll, 2500);
+      await poll(); // 立即先查一次
     } catch (e) {
-      // 后端检测到已有计划：弹出覆盖确认框，由用户决定是否重新生成
+      clearInterval(genTimerRef.current);
+      setGenStep('');
+      // 后端检测到已有计划：弹出覆盖确认框，由用户决定是否重新生成（同步返回的场景）
       if (e?.code === 'PLAN_EXISTS' || e?.status === 409) {
         setSavedInfo({ exists: true, ...(e.data?.existing || {}) });
         setShowOverwrite(true);
       } else {
         setError(e?.message || '生成失败');
       }
-    } finally {
       setLoading(false);
     }
   };
@@ -477,15 +506,35 @@ function Plan() {
               disabled={loading}
               className="px-6 py-2.5 rounded-button bg-mint text-white font-medium hover:opacity-90 disabled:opacity-50 transition-opacity"
             >
-              {loading ? '生成中…' : '生成学习计划'}
+              {loading ? `生成中 ${genProgress}%` : '生成学习计划'}
             </button>
             <button
               onClick={() => setShowAdvanced((v) => !v)}
-              className="px-4 py-2.5 rounded-button border border-gray-200 text-gray-600 hover:bg-gray-50 transition-colors"
+              disabled={loading}
+              className="px-4 py-2.5 rounded-button border border-gray-200 text-gray-600 hover:bg-gray-50 transition-colors disabled:opacity-50"
             >
               {showAdvanced ? '收起高级' : '高级'}
             </button>
           </div>
+
+          {/* 异步生成进度条：提交后后端后台跑，前端轮询展示实时进度（绕开 Render 30s 网关限制） */}
+          {loading && (
+            <div className="mt-3">
+              <div className="h-2 w-full overflow-hidden rounded-full bg-gray-100">
+                <div
+                  className="h-full rounded-full bg-mint transition-all duration-500"
+                  style={{ width: `${Math.max(genProgress, 5)}%` }}
+                />
+              </div>
+              <p className="mt-1 text-xs text-gray-400">
+                {genStep === 'xhs' && '正在采集小红书学习素材…'}
+                {genStep === 'skillTree' && '正在分析岗位技能树…'}
+                {genStep === 'resources' && '正在匹配真实 PDF / 视频资源…'}
+                {genStep === 'stagePlan' && '正在生成阶段学习计划…'}
+                {(!genStep || genStep === 'init' || genStep === '提交中') && '正在启动生成任务…'}
+              </p>
+            </div>
+          )}
 
           {showAdvanced && (
             <div className="mt-3">

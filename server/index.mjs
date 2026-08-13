@@ -1405,174 +1405,177 @@ const server = http.createServer(async (req, res) => {
     }
 
     // ============ MVP 主链路：岗位 -> 技能树 -> 标准化 -> 资源匹配 -> 总体阶段计划 ============
-    // 一次调用跑完全链路，只产出【阶段级】总体计划，不做每日拆分。
-    // 资源（PDF / B站视频）全部由代码从真实系统检索并回填，LLM 不得编造。
+    // 异步任务模式：/api/mvp/plan 立即返回 taskId，后台跑全链路，前端轮询 /api/mvp/plan/progress。
+    // 原因：Render 免费版网关硬超时仅 30s，而本链路（小红书采集 + 多次 LLM）在云端必然超 30s。
+    const mvpPlanTaskMap = (global.__mvpPlanTaskMap ||= new Map());
+    function updateMvpPlanTask(taskId, patch) {
+      const t = mvpPlanTaskMap.get(taskId) || {};
+      Object.assign(t, patch);
+      mvpPlanTaskMap.set(taskId, t);
+    }
+
     if (pathname === '/api/mvp/plan' && req.method === 'POST') {
       const userId = requireUserId(req, res); if (!userId) return;
-      try {
-        const b = await readBody(req);
-        const job = String(b.job || '').trim();
-        if (!job) return sendJson(res, 400, { error: 'job（目标岗位）不能为空', code: 'EMPTY_JOB' });
-        const force = b.force === true || url.searchParams.get('force') === '1';
-
-        // 每次生成都保存为最新版：直接覆盖 learning_plans（不再 409 拦截）
-
-        const trace = [];
-        // ---- 步骤 1：小红书素材（前端传入优先；未传则按岗位实时采集）----
-        let posts = Array.isArray(b.xhsPosts) ? b.xhsPosts.filter((p) => p && (p.content || p.ocrText)) : [];
-        let xhsFallback = false;   // 本次是否因小红书不可用而降级
-        let xhsSearchStatus = 'empty';
-        let xhsError = '';        // 降级原因（供前端提示）
-        let xhsNeedLogin = false;  // 小红书是否需要登录
-        if (!posts.length) {
-          try {
-            // 切换式隔离：生成路线前切到当前用户自己的小红书 cookie
-            plan.setXhsActiveUser(userId);
-            const searched = await plan.searchXhsPostsPaginated(job, 1, 5);
-            xhsSearchStatus = searched?.searchStatus || (searched?.posts?.length ? 'success' : (searched?.needLogin ? 'blocked' : 'empty'));
-            console.log('[XHS SEARCH]', JSON.stringify({ keyword: job, resultCount: Array.isArray(searched?.posts) ? searched.posts.length : 0, status: xhsSearchStatus }));
-            const metas = (searched?.posts || []).slice(0, 3);
-            // 搜索接口只返回元数据，正文/OCR 需逐篇懒加载后才能供技能抽取使用
-            const details = await Promise.all(metas.map(async (m) => {
-              try {
-                const d = await plan.getXhsPostDetail(m.id, m.xsecToken);
-                return { id: m.id || '', xsecToken: m.xsecToken || '', title: m.title || '', link: m.link || m.url || '', author: m.author || '', content: d?.content || '', ocrText: d?.ocrText || '', ocrUsed: Boolean(d?.ocrText && String(d.ocrText).trim()) };
-              } catch { return null; }
-            }));
-            posts = details.filter((p) => p && (p.content || p.ocrText));
-            if (!posts.length) {
+      const b = await readBody(req).catch(() => ({}));
+      const job = String(b.job || '').trim();
+      if (!job) return sendJson(res, 400, { error: 'job（目标岗位）不能为空', code: 'EMPTY_JOB' });
+      const force = b.force === true || url.searchParams.get('force') === '1';
+      const taskId = 'mvp_' + userId + '_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8);
+      mvpPlanTaskMap.set(taskId, { status: 'running', step: 'init', progress: 0, createdAt: Date.now() });
+      // 后台异步执行，不等结果直接返回 taskId
+      void (async () => {
+        try {
+          const trace = [];
+          // ---- 步骤 1：小红书素材（前端传入优先；未传则按岗位实时采集）----
+          updateMvpPlanTask(taskId, { step: 'xhs', progress: 10 });
+          let posts = Array.isArray(b.xhsPosts) ? b.xhsPosts.filter((p) => p && (p.content || p.ocrText)) : [];
+          let xhsFallback = false;
+          let xhsSearchStatus = 'empty';
+          let xhsError = '';
+          let xhsNeedLogin = false;
+          if (!posts.length) {
+            try {
+              plan.setXhsActiveUser(userId);
+              const searched = await plan.searchXhsPostsPaginated(job, 1, 5);
+              xhsSearchStatus = searched?.searchStatus || (searched?.posts?.length ? 'success' : (searched?.needLogin ? 'blocked' : 'empty'));
+              console.log('[XHS SEARCH]', JSON.stringify({ keyword: job, resultCount: Array.isArray(searched?.posts) ? searched.posts.length : 0, status: xhsSearchStatus }));
+              const metas = (searched?.posts || []).slice(0, 3);
+              const details = await Promise.all(metas.map(async (m) => {
+                try {
+                  const d = await plan.getXhsPostDetail(m.id, m.xsecToken);
+                  return { id: m.id || '', xsecToken: m.xsecToken || '', title: m.title || '', link: m.link || m.url || '', author: m.author || '', content: d?.content || '', ocrText: d?.ocrText || '', ocrUsed: Boolean(d?.ocrText && String(d.ocrText).trim()) };
+                } catch { return null; }
+              }));
+              posts = details.filter((p) => p && (p.content || p.ocrText));
+              if (!posts.length) {
+                xhsFallback = true;
+                xhsNeedLogin = !!(searched && searched.needLogin);
+                xhsError = (searched && searched.needLogin)
+                  ? '小红书未登录，已使用纯岗位模式生成计划'
+                  : '未获取到小红书数据（MCP 未连通或搜索无结果），已使用纯岗位模式生成计划';
+              }
+            } catch (e) {
+              console.warn('[mvp/plan] 小红书采集失败，降级为无帖子模式:', e.message);
               xhsFallback = true;
-              xhsNeedLogin = !!(searched && searched.needLogin);
-              xhsError = (searched && searched.needLogin)
-                ? '小红书未登录，已使用纯岗位模式生成计划'
-                : '未获取到小红书数据（MCP 未连通或搜索无结果），已使用纯岗位模式生成计划';
+              xhsError = '小红书采集失败（' + e.message + '），已使用纯岗位模式生成计划';
             }
-          } catch (e) {
-            console.warn('[mvp/plan] 小红书采集失败，降级为无帖子模式:', e.message);
-            xhsFallback = true;
-            xhsError = '小红书采集失败（' + e.message + '），已使用纯岗位模式生成计划';
           }
-        }
-        posts = posts.slice(0, 6);
-        trace.push({ step: 'xhs', count: posts.length, fallback: xhsFallback, error: xhsError });
+          posts = posts.slice(0, 6);
+          trace.push({ step: 'xhs', count: posts.length, fallback: xhsFallback, error: xhsError });
 
-        // ---- 步骤 2：技能树抽取（LLM）----
-        let route;
-        if (skillNormalizer.isAiProductManagerJob(job)) {
-          // AI 产品经理使用岗位能力目录，避免让通用 LLM 抽取漂移到普通产品/工程技能。
-          route = {
-            _source: 'role_catalog',
-            core_skills: skillNormalizer.AI_PM_SKILL_CATALOG.map((s) => ({
-              skill: s.name,
-              level: s.level,
-              category: s.category,
-            })),
-          };
-        } else {
-          if (posts.length) route = await learningRouteAnalyzer.analyzeLearningRoutes(posts, job);
-          // 小红书未登录/无结果，或抽取结果为空时，降级为「仅凭岗位」抽取技能树，保证链路可跑通
-          if (!route || !(route.core_skills || []).length) route = await learningRouteAnalyzer.analyzeRouteByJobOnly(job);
-        }
-        trace.push({ step: 'skillTree', coreSkills: (route.core_skills || []).length, source: route._source || 'xhs' });
+          // ---- 步骤 2：技能树抽取（LLM）----
+          updateMvpPlanTask(taskId, { step: 'skillTree', progress: 40 });
+          let route;
+          if (skillNormalizer.isAiProductManagerJob(job)) {
+            route = {
+              _source: 'role_catalog',
+              core_skills: skillNormalizer.AI_PM_SKILL_CATALOG.map((s) => ({
+                skill: s.name, level: s.level, category: s.category,
+              })),
+            };
+          } else {
+            if (posts.length) route = await learningRouteAnalyzer.analyzeLearningRoutes(posts, job);
+            if (!route || !(route.core_skills || []).length) route = await learningRouteAnalyzer.analyzeRouteByJobOnly(job);
+          }
+          trace.push({ step: 'skillTree', coreSkills: (route.core_skills || []).length, source: route._source || 'xhs' });
 
-        // ---- 步骤 3：技能标准化（用标准接口形态 {job, skills}）----
-        const xhsSources = posts.map((p) => ({
-          id: p.id || '', title: p.title || '', link: p.link || '', author: p.author || '',
-          contentLength: String(p.content || '').length, ocrLength: String(p.ocrText || '').length,
-          ocrUsed: Boolean(p.ocrUsed || String(p.ocrText || '').trim()),
-        })).filter((p) => p.id || p.title);
-        trace.push({ step: 'xhs', count: xhsSources.length, ocrCount: xhsSources.filter((p) => p.ocrUsed).length });
-        // RAG 向量写入不阻塞学习计划主请求；帖子已取得后后台去重写入。
-        const xhsRagPosts = posts.map((post) => ({
-          post,
-          content: [post.title, post.content, post.ocrText].filter(Boolean).join('\n\n').trim(),
-        })).filter(({ post, content }) => content && post.id);
-        void Promise.all(xhsRagPosts.map(async ({ post, content }) => {
-          try { await rag.ingestDocument({ docId: `xhs_${post.id}`, title: post.title || post.id, content }, { source: 'xhs', force: false }); }
-          catch (e) { console.warn('[mvp/plan] 小红书 RAG 写入失败:', post.id, e.message); }
-        }));
-        trace.push({ step: 'xhsRag', queued: xhsRagPosts.length });
+          // ---- 步骤 3：技能标准化 ----
+          const xhsSources = posts.map((p) => ({
+            id: p.id || '', title: p.title || '', link: p.link || '', author: p.author || '',
+            contentLength: String(p.content || '').length, ocrLength: String(p.ocrText || '').length,
+            ocrUsed: Boolean(p.ocrUsed || String(p.ocrText || '').trim()),
+          })).filter((p) => p.id || p.title);
+          trace.push({ step: 'xhs', count: xhsSources.length, ocrCount: xhsSources.filter((p) => p.ocrUsed).length });
+          const xhsRagPosts = posts.map((post) => ({
+            post,
+            content: [post.title, post.content, post.ocrText].filter(Boolean).join('\n\n').trim(),
+          })).filter(({ post, content }) => content && post.id);
+          void Promise.all(xhsRagPosts.map(async ({ post, content }) => {
+            try { await rag.ingestDocument({ docId: `xhs_${post.id}`, title: post.title || post.id, content }, { source: 'xhs', force: false }); }
+            catch (e) { console.warn('[mvp/plan] 小红书 RAG 写入失败:', post.id, e.message); }
+          }));
+          trace.push({ step: 'xhsRag', queued: xhsRagPosts.length });
 
-        const rawSkillList = (route.core_skills || []).map((c) => ({
-          name: c.skill || c.name || c.title || '',
-          level: c.level || 'beginner',
-          category: c.category || 'other',
-        })).filter((s) => s.name);
-        const skillTree = skillNormalizer.normalizeSkills({ job, skills: rawSkillList });
-        trace.push({ step: 'normalize', skills: (skillTree.skills || []).length });
+          const rawSkillList = (route.core_skills || []).map((c) => ({
+            name: c.skill || c.name || c.title || '',
+            level: c.level || 'beginner',
+            category: c.category || 'other',
+          })).filter((s) => s.name);
+          const skillTree = skillNormalizer.normalizeSkills({ job, skills: rawSkillList });
+          trace.push({ step: 'normalize', skills: (skillTree.skills || []).length });
 
-        // ---- 步骤 4+5：真实资源匹配（纯代码，无 LLM）----
-        const matched = await skillResourceMatcher.matchResources(skillTree, { job });
-        trace.push({ step: 'resources', pdf: matched.pdfResources.length, video: matched.videoResources.length, missing: matched.coverage.missing.length });
+          // ---- 步骤 4+5：真实资源匹配 ----
+          updateMvpPlanTask(taskId, { step: 'resources', progress: 65 });
+          const matched = await skillResourceMatcher.matchResources(skillTree, { job });
+          trace.push({ step: 'resources', pdf: matched.pdfResources.length, video: matched.videoResources.length, missing: matched.coverage.missing.length });
 
-        // ---- 步骤 6：阶段级总体计划（LLM 划分阶段 + 代码回填真实资源）----
-        const stagePlan = await stagePlanGenerator.generateStagePlan({
-          job,
-          skillTree,
-          skills: matched.skills,
-          pdfResources: matched.pdfResources,
-          videoResources: matched.videoResources,
-          coverage: matched.coverage,
-          xhsSources,
-        });
-        trace.push({ step: 'stagePlan', stages: (stagePlan.stages || []).length });
-
-        // ---- 步骤 5.5：把已匹配的真实资源持久化到 matched_resources（资源缓存层），后续每日计划直接读缓存，不再调 B站搜索 ----
-        // 注意：planId 必须与全系统一致（buildPlanId = `plan_${userId}`），否则资源缓存与计划/每日任务三层对不上。
-        const planId = buildPlanId(userId);
-        try {
-          const persisted = skillResourceMatcher.persistMatchedResources(db, {
-            planId,
-            pdfResources: matched.pdfResources,
-            videoResources: matched.videoResources,
+          // ---- 步骤 6：阶段级总体计划 ----
+          updateMvpPlanTask(taskId, { step: 'stagePlan', progress: 85 });
+          const stagePlan = await stagePlanGenerator.generateStagePlan({
+            job, skillTree, skills: matched.skills,
+            pdfResources: matched.pdfResources, videoResources: matched.videoResources,
+            coverage: matched.coverage, xhsSources,
           });
-          trace.push({ step: 'persistResources', saved: persisted.saved });
+          trace.push({ step: 'stagePlan', stages: (stagePlan.stages || []).length });
+
+          const planId = buildPlanId(userId);
+          try {
+            const persisted = skillResourceMatcher.persistMatchedResources(db, {
+              planId, pdfResources: matched.pdfResources, videoResources: matched.videoResources,
+            });
+            trace.push({ step: 'persistResources', saved: persisted.saved });
+          } catch (e) {
+            console.warn('[mvp/plan] 资源缓存写入失败（不影响计划生成）:', e.message);
+          }
+
+          const trendTerms = extractSearchTerms(posts);
+          const enrichedSkills = (skillTree.skills || []).map((s) => ({
+            ...s,
+            searchTerms: Array.from(new Set([s.searchIntent, ...trendTerms].filter(Boolean))),
+          }));
+
+          const result = {
+            ...stagePlan,
+            planType: 'stage_only',
+            skillTree: {
+              job: skillTree.job, categories: skillTree.categories, skills: enrichedSkills,
+              normalized_skill_dependencies: skillTree.normalized_skill_dependencies, trendTerms,
+            },
+            resourcePool: { pdf: matched.pdfResources, videos: matched.videoResources },
+            coverage: matched.coverage,
+            xhsFallback, xhsSearchStatus, loginStatus: !xhsNeedLogin, xhsError, trace,
+          };
+
+          const now = Date.now();
+          try {
+            db.prepare(`INSERT INTO learning_plans (user_id, job, data, progress, created_at, updated_at)
+              VALUES (?,?,?,?,?,?)
+              ON CONFLICT(user_id) DO UPDATE SET job=excluded.job, data=excluded.data, progress=excluded.progress, updated_at=excluded.updated_at`)
+              .run(userId, job, JSON.stringify(result), null, now, now);
+          } catch (e) {
+            console.warn('[mvp/plan] 保存学习计划失败:', e.message);
+          }
+          updateMvpPlanTask(taskId, { status: 'done', progress: 100, result: { ...result, saved: true, overwritten: true } });
         } catch (e) {
-          console.warn('[mvp/plan] 资源缓存写入失败（不影响计划生成）:', e.message);
+          const status = ['EMPTY_JOB', 'EMPTY_SKILLS', 'EMPTY_ROUTE'].includes(e.code) ? 400 : 502;
+          console.error('[mvp/plan] 生成失败:', e);
+          updateMvpPlanTask(taskId, { status: 'error', error: e.message, code: e.code || 'MVP_PLAN_FAILED', httpStatus: status });
         }
+      })();
+      return sendJson(res, 200, { taskId, status: 'running' });
+    }
 
-        // ---- 步骤 5.7：从本次小红书/面经帖提取个性化搜索词，挂到 skillTree，供能力地图渲染 ----
-        // 新用户未绑定小红书（无 posts）时 trendTerms 为空 -> 能力地图搜索词也为空（个性化空白）。
-        const trendTerms = extractSearchTerms(posts);
-        const enrichedSkills = (skillTree.skills || []).map((s) => ({
-          ...s,
-          searchTerms: Array.from(new Set([s.searchIntent, ...trendTerms].filter(Boolean))),
-        }));
-
-        const result = {
-          ...stagePlan,
-          planType: 'stage_only', // 明确标记：不含每日计划
-          skillTree: {
-            job: skillTree.job,
-            categories: skillTree.categories,
-            skills: enrichedSkills,
-            normalized_skill_dependencies: skillTree.normalized_skill_dependencies,
-            trendTerms, // 本次小红书/面经相关搜索词（用户个性化）
-          },
-          resourcePool: { pdf: matched.pdfResources, videos: matched.videoResources },
-          coverage: matched.coverage,
-          xhsFallback,          // 本次是否因小红书不可用而降级
-          xhsSearchStatus,
-          loginStatus: !xhsNeedLogin,
-          xhsError,             // 降级原因（前端据此提示用户）
-          trace,
-        };
-
-        const now = Date.now();
-        try {
-          db.prepare(`INSERT INTO learning_plans (user_id, job, data, progress, created_at, updated_at)
-            VALUES (?,?,?,?,?,?)
-            ON CONFLICT(user_id) DO UPDATE SET job=excluded.job, data=excluded.data, progress=excluded.progress, updated_at=excluded.updated_at`)
-            .run(userId, job, JSON.stringify(result), null, now, now);
-        } catch (e) {
-          console.warn('[mvp/plan] 保存学习计划失败:', e.message);
-        }
-        return sendJson(res, 200, { ...result, saved: true, overwritten: true });
-      } catch (e) {
-        const status = ['EMPTY_JOB', 'EMPTY_SKILLS', 'EMPTY_ROUTE'].includes(e.code) ? 400 : 502;
-        console.error('[mvp/plan] 生成失败:', e);
-        return sendJson(res, status, { error: e.message, code: e.code || 'MVP_PLAN_FAILED' });
-      }
+    // 轮询进度
+    if (pathname === '/api/mvp/plan/progress' && req.method === 'GET') {
+      const userId = requireUserId(req, res); if (!userId) return;
+      const taskId = url.searchParams.get('taskId') || '';
+      const t = mvpPlanTaskMap.get(taskId);
+      if (!t) return sendJson(res, 404, { error: '任务不存在或已过期', code: 'TASK_NOT_FOUND' });
+      // 安全校验：taskId 必须归属当前用户
+      if (!taskId.startsWith('mvp_' + userId + '_')) return sendJson(res, 403, { error: '无权访问该任务', code: 'FORBIDDEN' });
+      if (t.status === 'error') return sendJson(res, t.httpStatus || 502, { error: t.error, code: t.code || 'MVP_PLAN_FAILED' });
+      if (t.status === 'done') return sendJson(res, 200, { status: 'done', progress: 100, result: t.result });
+      return sendJson(res, 200, { status: t.status, step: t.step, progress: t.progress || 0 });
     }
 
     // 读取当前用户已保存的学习计划（前端据此判断是否需要弹出「覆盖确认」）
