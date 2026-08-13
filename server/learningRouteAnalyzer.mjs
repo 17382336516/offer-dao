@@ -75,8 +75,17 @@ export async function analyzeRouteByJobOnly(job) {
     err.code = 'EMPTY_JOB';
     throw err;
   }
-  const raw = await _callQwen(JOB_ONLY_SYSTEM_PROMPT, `目标岗位：${target}\n\n请严格按系统指令输出 JSON。`);
-  const route = parseJsonLoose(raw);
+  let route;
+  try {
+    const raw = await _callQwen(JOB_ONLY_SYSTEM_PROMPT, `目标岗位：${target}\n\n请严格按系统指令输出 JSON。`);
+    route = parseJsonLoose(raw);
+  } catch (e) {
+    // 大模型不可用（如云端 DashScope 网络慢/超时）：用规则兜底，保证 /api/mvp/plan 不 502。
+    // 必须返回非空 core_skills，否则 index.mjs 会反复重试 analyzeRouteByJobOnly 形成冗余调用。
+    console.warn('[learningRouteAnalyzer] analyzeRouteByJobOnly LLM 失败，使用规则兜底:', e.message);
+    route = buildFallback(job, []);
+    route._llmError = e.message;
+  }
   route.job = route.job || target;
   route.core_skills = Array.isArray(route.core_skills) ? route.core_skills : [];
   route.learning_path = Array.isArray(route.learning_path) ? route.learning_path : [];
@@ -119,12 +128,14 @@ function parseJsonLoose(text) {
   return JSON.parse(jsonStr);
 }
 
-// 兜底：当模型调用/解析失败时，基于规则生成一个最小结构，保证接口仍有可用输出
+// 兜底：当模型调用/解析失败时，基于规则生成一个最小结构，保证接口仍有可用输出。
+// 注意：core_skills 必须非空（至少含岗位本身），否则 index.mjs 会反复重试 analyzeRouteByJobOnly。
 function buildFallback(job, posts) {
+  const target = String(job || '').trim() || '目标岗位';
   return {
     job: job || '',
-    summary: '（模型暂不可用，已基于输入帖子的原始文本生成占位结构，请用正常接口重试）',
-    core_skills: [],
+    summary: '（模型暂不可用，已基于岗位生成基础技能占位，请用正常接口重试以获得更精准路线）',
+    core_skills: [{ skill: target, level: 'beginner', category: 'other' }],
     learning_path: posts.map((p, i) => ({
       phase: i + 1,
       name: `笔记${i + 1}路线`,
