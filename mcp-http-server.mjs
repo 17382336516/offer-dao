@@ -136,6 +136,9 @@ async function ensureScrape() {
     await syncScrapeCookies();
     dbg('init done');
     scrapeInitAt = Date.now();
+    // 空闲回收：无头浏览器常驻会占用大量内存（Render 免费实例仅 512MB），
+    // 初始化后启动空闲计时器，超过阈值无活动则自动关闭，下次调用重建，避免 OOM。
+    scheduleScrapeIdleClose();
     return;
   }
   try {
@@ -148,9 +151,26 @@ async function ensureScrape() {
       await syncScrapeCookies();
       scrapeInitAt = fs.statSync(p).mtimeMs;
     }
+    scheduleScrapeIdleClose();
   } catch (e) {
     dbg('refresh cookie err: ' + e.message);
   }
+}
+
+// 无头浏览器空闲自动关闭（防 OOM）。云端默认 90s，本地（非云端）关闭功能避免误杀用户搜索会话，设更长/关闭。
+const SCRAPE_IDLE_MS = process.env.RENDER === 'true' || process.env.HEADLESS === 'true' ? 90000 : 0;
+let scrapeIdleTimer = null;
+function scheduleScrapeIdleClose() {
+  if (!SCRAPE_IDLE_MS) return;
+  if (scrapeIdleTimer) clearTimeout(scrapeIdleTimer);
+  scrapeIdleTimer = setTimeout(async () => {
+    if (scrapeBrowser.browser) {
+      dbg('scrape idle ' + SCRAPE_IDLE_MS + 'ms, auto close to free memory');
+      await scrapeBrowser.close().catch(() => {});
+      scrapeBrowser.browser = null;
+      scrapeBrowser.context = null;
+    }
+  }, SCRAPE_IDLE_MS);
 }
 
 // 登录页（有头浏览器窗口）保持常驻，不自动关闭，避免用户还没扫码窗口就消失
