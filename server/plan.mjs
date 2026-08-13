@@ -328,6 +328,21 @@ async function mcpPost(payload, timeoutMs = 15000) {
   return res.text();
 }
 
+// 显式关闭云端无头采集浏览器，释放内存（避免进入后续 LLM/stagePlan 重内存阶段时 OOM）。
+// 仅供后端「计划生成 - 小红书采集阶段」结束后调用；本地/交互式搜索不调用，避免误关用户会话。
+export async function closeScrapeBrowser() {
+  try {
+    const id = () => Math.floor(Math.random() * 1e9);
+    await mcpPost({
+      jsonrpc: '2.0', id: id(), method: 'tools/call',
+      params: { name: 'close_scrape_browser', arguments: {} },
+    }, 10000);
+    console.log('[plan] closeScrapeBrowser 已通知 MCP 关闭无头采集浏览器');
+  } catch (e) {
+    console.warn('[plan] closeScrapeBrowser 调用失败（忽略）:', e.message);
+  }
+}
+
 function extractText(raw) {
   let text = '';
   if (raw.includes('data:')) {

@@ -691,6 +691,19 @@ async function handleToolCall(name, args) {
       if (args.unfavorite) { await xhs.unfavoriteFeed(args.feedId, args.xsecToken); return textResult(`取消收藏成功 - Feed ID: ${args.feedId}`); }
       await xhs.favoriteFeed(args.feedId, args.xsecToken);
       return textResult(`收藏成功 - Feed ID: ${args.feedId}`);
+    case 'close_scrape_browser': {
+      // 显式关闭无头采集浏览器，释放内存（云端 OOM 防护）。
+      // 由后端「计划生成 - 小红书采集阶段」结束后调用，确保进入 LLM/stagePlan 重内存阶段前浏览器已关闭。
+      if (scrapeIdleTimer) { clearTimeout(scrapeIdleTimer); scrapeIdleTimer = null; }
+      if (scrapeBrowser.browser) {
+        await scrapeBrowser.close().catch(() => {});
+        scrapeBrowser.browser = null;
+        scrapeBrowser.context = null;
+        dbg('close_scrape_browser done');
+        return textResult('无头采集浏览器已关闭，内存已释放');
+      }
+      return textResult('无头采集浏览器当前未运行，无需关闭');
+    }
     default:
       throw new Error(`Unknown tool: ${name}`);
   }
@@ -712,6 +725,11 @@ const XHS_EXTRA_TOOLS = [
     name: 'commit_user_cookie',
     description: '用户扫码登录成功后，把 MCP 全局 cookie 落盘到该用户隔离文件',
     inputSchema: { type: 'object', properties: { userId: { type: 'string', description: 'offer dao 用户 id' } }, required: ['userId'] },
+  },
+  {
+    name: 'close_scrape_browser',
+    description: '显式关闭无头采集浏览器并释放内存。由后端在「计划生成-小红书采集阶段」结束后调用，避免浏览器常驻导致云端 OOM。',
+    inputSchema: { type: 'object', properties: {} },
   },
 ];
 

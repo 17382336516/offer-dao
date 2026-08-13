@@ -1433,15 +1433,9 @@ const server = http.createServer(async (req, res) => {
           let xhsSearchStatus = 'empty';
           let xhsError = '';
           let xhsNeedLogin = false;
-          // 云端（Render 免费实例 512MB）避免拉起 Chromium 导致 OOM：仅当用户已在前端显式
-          // 传入 xhsPosts 时才使用，否则直接走纯岗位模式，绝不触发浏览器采集。
-          const CLOUD_SKIP_XHS = process.env.RENDER === 'true' || process.env.HEADLESS === 'true';
-          if (!posts.length && CLOUD_SKIP_XHS) {
-            xhsFallback = true;
-            xhsSearchStatus = 'skipped_cloud';
-            xhsError = '云端环境已跳过浏览器采集（避免 OOM），使用纯岗位模式生成计划';
-            console.log('[mvp/plan] CLOUD_SKIP_XHS=true，跳过小红书浏览器采集，走纯岗位模式');
-          } else if (!posts.length) {
+          // 云端也会真实采集小红书（方案 B：拆解步骤、用完即关，控制内存峰值避免 OOM）。
+          // 若用户已在前端显式传入 xhsPosts 则直接用；否则实时采集；采集块结束后云端立即关闭浏览器。
+          if (!posts.length) {
             try {
               plan.setXhsActiveUser(userId);
               const searched = await plan.searchXhsPostsPaginated(job, 1, 5);
@@ -1466,6 +1460,12 @@ const server = http.createServer(async (req, res) => {
               console.warn('[mvp/plan] 小红书采集失败，降级为无帖子模式:', e.message);
               xhsFallback = true;
               xhsError = '小红书采集失败（' + e.message + '），已使用纯岗位模式生成计划';
+            }
+            // 云端（Render 免费实例 512MB）：采集阶段结束立即释放无头浏览器，
+            // 确保进入 skillTree/stagePlan 重内存阶段前内存已回落，避免 OOM kill。
+            const CLOUD = process.env.RENDER === 'true' || process.env.HEADLESS === 'true';
+            if (CLOUD) {
+              try { await plan.closeScrapeBrowser(); } catch (e) { console.warn('[mvp/plan] closeScrapeBrowser 失败（忽略）:', e.message); }
             }
           }
           posts = posts.slice(0, 6);
