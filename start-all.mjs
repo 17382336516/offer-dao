@@ -8,7 +8,7 @@ import path from 'node:path';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 // ---------- 1. 拉起 MCP 子进程（带守护）----------
-const mcpEnv = { ...process.env };
+const mcpEnv = { ...process.env, PORT: '18060', HOST: '0.0.0.0' };
 // 用绝对路径，避免 cwd 因目录名含特殊空格（NBSP）解析失败时找不到脚本
 const mcpScript = path.join(__dirname, 'mcp-http-server.mjs');
 const mcpArgs = [mcpScript];

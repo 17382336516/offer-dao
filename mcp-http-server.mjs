@@ -715,7 +715,8 @@ function readBody(req) {
   });
 }
 
-const PORT = Number(process.env.PORT || 18060);
+// MCP 与 Render 后端共进程部署时必须使用独立内部端口，不能继承 Render 的 PORT。
+const PORT = Number(process.env.MCP_PORT || 18060);
 const HOST = process.env.HOST || '0.0.0.0';
 
 const httpServer = http.createServer(async (req, res) => {
