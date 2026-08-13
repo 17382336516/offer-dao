@@ -102,24 +102,29 @@ export function hasUserLoginCookie(userId) {
 async function ensureUserCookie() {
   if (!activeXhsUserId) return;
   const id = () => Math.floor(Math.random() * 1e9);
-  await mcpPost({
-    jsonrpc: '2.0', id: id(), method: 'initialize',
-    params: { protocolVersion: '2024-11-05', capabilities: {}, clientInfo: { name: 'offerdao', version: '1.0' } },
-  }).catch(() => {});
-  const p = userCookieFile(activeXhsUserId);
-  if (fs.existsSync(p)) {
-    // 该用户已绑定：切到他自己的隔离 cookie
-    await mcpPost({
-      jsonrpc: '2.0', id: id(), method: 'tools/call',
-      params: { name: 'switch_user_cookie', arguments: { userId: String(activeXhsUserId) } },
-    }).catch(() => {});
-  } else {
-    // 该用户尚未绑定：清空全局残留 cookie，防止误用前任用户的账号（旧 cookie 不自动归属）
-    await mcpPost({
-      jsonrpc: '2.0', id: id(), method: 'tools/call',
-      params: { name: 'prepare_bind', arguments: { userId: String(activeXhsUserId) } },
-    }).catch(() => {});
-  }
+  await Promise.race([
+    (async () => {
+      await mcpPost({
+        jsonrpc: '2.0', id: id(), method: 'initialize',
+        params: { protocolVersion: '2024-11-05', capabilities: {}, clientInfo: { name: 'offerdao', version: '1.0' } },
+      }).catch(() => {});
+      const p = userCookieFile(activeXhsUserId);
+      if (fs.existsSync(p)) {
+        // 该用户已绑定：切到他自己的隔离 cookie
+        await mcpPost({
+          jsonrpc: '2.0', id: id(), method: 'tools/call',
+          params: { name: 'switch_user_cookie', arguments: { userId: String(activeXhsUserId) } },
+        }).catch(() => {});
+      } else {
+        // 该用户尚未绑定：清空全局残留 cookie，防止误用前任用户的账号（旧 cookie 不自动归属）
+        await mcpPost({
+          jsonrpc: '2.0', id: id(), method: 'tools/call',
+          params: { name: 'prepare_bind', arguments: { userId: String(activeXhsUserId) } },
+        }).catch(() => {});
+      }
+    })(),
+    new Promise((r) => setTimeout(r, 12000)), // 12s 硬上限，避免 MCP 失联时整段 pending
+  ]).catch(() => {});
 }
 
 // 查询用户在 xhs_accounts 表的绑定状态（用户级隔离，与全局/他人 cookie 无关）
@@ -301,9 +306,11 @@ export async function callQwen(system, user, model, timeoutMs) {
 }
 
 // ---------- 小红书 MCP 调用 ----------
-async function mcpPost(payload, timeoutMs = 90000) {
+async function mcpPost(payload, timeoutMs = 15000) {
   // 用 Promise.race + setTimeout 做硬超时兜底：Node 22 的 AbortSignal.timeout 在某些
   // MCP(fetch SSE) 场景下不会真正中断挂起的 fetch，导致调用永久 pending、事件循环被占满。
+  // 默认超时从 90s 降到 15s：云端 Render 实例没有图形界面/XServer，Chromium 启动易卡死，
+  // 必须快速失败降级（/api/mvp/plan 会在小红书不可用时回退到纯岗位模式），避免 503/网关超时。
   const controller = new AbortController();
   const fetchPromise = fetch(XHS_MCP, {
     method: 'POST',

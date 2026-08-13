@@ -71,11 +71,13 @@ if (fs.existsSync(systemChrome)) process.env.BROWSER_BIN_PATH = systemChrome;
 const config = loadConfig();
 const cookieService = new CookieService(config.cookiesPath);
 // 登录用【有头】浏览器（弹出真实窗口，规避登录风控，且能渲染出可截图的二维码）。
-// 注意：此处强制 headless:false，否则无头模式下小红书不渲染二维码图片/canvas，
+// 注意：本地默认强制 headless:false，否则无头模式下小红书不渲染二维码图片/canvas，
 // 导致 xhs-cookies 始终取不到二维码，前端只能降级到「打开浏览器窗口」而用户根本看不到（窗口在后端桌面）。
 // 搜索/抓详情改用独立的【无头】浏览器，复用同一份登录 cookie，
-// 这样点击「搜索帖子」时不会再弹出/跳转到可见的小红书窗口，结果直接回传到页面。
-const loginConfig = { ...config, headless: false };
+// 这样点击「搜索帖子」时不会再弹出/跳转到可见的小红书窗口，结果直接传回页面。
+// 云端（HEADLESS=true / RENDER=true）没有 XServer，必须让登录浏览器也走无头，避免启动失败。
+const forceHeadless = process.env.HEADLESS === 'true' || process.env.RENDER === 'true';
+const loginConfig = { ...config, headless: forceHeadless ? true : false };
 const browserService = new BrowserService(loginConfig, cookieService);
 const xhs = new XiaohongshuService(browserService, cookieService);
 const headlessConfig = { ...config, headless: true };
