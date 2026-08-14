@@ -76,7 +76,7 @@ const cookieService = new CookieService(config.cookiesPath);
 // 搜索/抓详情改用独立的【无头】浏览器，复用同一份登录 cookie，
 // 这样点击「搜索帖子」时不会再弹出/跳转到可见的小红书窗口，结果直接传回页面。
 // 云端（HEADLESS=true / RENDER=true）没有 XServer，必须让登录浏览器也走无头，避免启动失败。
-const forceHeadless = process.env.HEADLESS === 'true' || process.env.RENDER === 'true';
+const forceHeadless = process.env.HEADLESS === 'true' || process.env.RENDER === 'true' || process.env.DEPLOY_ENV === 'aliyun';
 const loginConfig = { ...config, headless: forceHeadless ? true : false };
 const browserService = new BrowserService(loginConfig, cookieService);
 const xhs = new XiaohongshuService(browserService, cookieService);
@@ -158,7 +158,7 @@ async function ensureScrape() {
 }
 
 // 无头浏览器空闲自动关闭（防 OOM）。云端默认 90s，本地（非云端）关闭功能避免误杀用户搜索会话，设更长/关闭。
-const SCRAPE_IDLE_MS = process.env.RENDER === 'true' || process.env.HEADLESS === 'true' ? 90000 : 0;
+const SCRAPE_IDLE_MS = process.env.RENDER === 'true' || process.env.HEADLESS === 'true' || process.env.DEPLOY_ENV === 'aliyun' ? 90000 : 0;
 let scrapeIdleTimer = null;
 function scheduleScrapeIdleClose() {
   if (!SCRAPE_IDLE_MS) return;

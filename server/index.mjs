@@ -1463,7 +1463,7 @@ const server = http.createServer(async (req, res) => {
             }
             // 云端（Render 免费实例 512MB）：采集阶段结束立即释放无头浏览器，
             // 确保进入 skillTree/stagePlan 重内存阶段前内存已回落，避免 OOM kill。
-            const CLOUD = process.env.RENDER === 'true' || process.env.HEADLESS === 'true';
+            const CLOUD = process.env.RENDER === 'true' || process.env.HEADLESS === 'true' || process.env.DEPLOY_ENV === 'aliyun';
             if (CLOUD) {
               try { await plan.closeScrapeBrowser(); } catch (e) { console.warn('[mvp/plan] closeScrapeBrowser 失败（忽略）:', e.message); }
             }

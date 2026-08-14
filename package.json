@@ -9,6 +9,7 @@
     "start": "node start-all.mjs",
     "dev:all": "node dev-all.mjs",
     "build": "vite build",
+    "build:prod": "VITE_API_BASE_URL='' vite build",
     "lint": "eslint . --ext js,jsx --report-unused-disable-directives --max-warnings 0",
     "preview": "vite preview"
   },
