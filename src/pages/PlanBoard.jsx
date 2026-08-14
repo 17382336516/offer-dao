@@ -1173,13 +1173,13 @@ function PlanBoard() {
                       <p className="text-lg font-bold text-gray-800">{targetLabel}</p>
                     </div>
                   </div>
-                  <div className="flex items-center gap-3">
-                    <div className="w-10 h-10 rounded-full bg-sky-100 text-sky-600 flex items-center justify-center">
+                  <div className="flex items-center gap-3 min-w-0">
+                    <div className="w-10 h-10 rounded-full bg-sky-100 text-sky-600 flex items-center justify-center shrink-0">
                       <Calendar className="w-5 h-5" />
                     </div>
-                    <div>
-                      <p className="text-xs text-gray-500">距离目标日</p>
-                      <p className="text-lg font-bold text-gray-800">{days} 天</p>
+                    <div className="min-w-0">
+                      <p className="text-xs text-gray-500 whitespace-nowrap">距离目标日</p>
+                      <p className="text-lg font-bold text-gray-800 whitespace-nowrap">{days} 天</p>
                     </div>
                   </div>
                 </div>

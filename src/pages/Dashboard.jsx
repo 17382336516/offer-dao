@@ -567,14 +567,14 @@ export default function Dashboard() {
             <div className="w-10 h-10 rounded-lg bg-[#FFE4E6] flex items-center justify-center">
               <Calendar className="w-5 h-5 text-[#EF4444]" />
             </div>
-            <div className="flex-1">
-              <p className="text-xs text-gray-500">距离目标日</p>
-              <p className="text-xl font-bold text-gray-800">{days}天</p>
+            <div className="flex-1 min-w-0">
+              <p className="text-xs text-gray-500 whitespace-nowrap">距离目标日</p>
+              <p className="text-xl font-bold text-gray-800 whitespace-nowrap">{days} 天</p>
             </div>
             <button
               type="button"
               onClick={() => setShowThreeDayTip(true)}
-              className="self-center px-3 py-1.5 text-sm rounded-lg bg-mint/10 text-mint hover:bg-mint/20 transition"
+              className="self-center px-3 py-1.5 text-sm rounded-lg bg-mint/10 text-mint hover:bg-mint/20 transition shrink-0"
             >修改目标日期</button>
           </div>
         </div>
