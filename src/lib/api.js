@@ -1,7 +1,8 @@
 // 前端与后端 API 交互的封装：统一处理 token 与会话。
 const TOKEN_KEY = 'offerToToken';
-// 兜底默认值：云端若漏配 VITE_API_BASE_URL，回退到 Render 后端，避免前端所有 /api 请求打到 Vercel 自身导致 404。
-const API_BASE_URL = String(import.meta.env.VITE_API_BASE_URL || 'https://offer-dao.onrender.com').replace(/\/$/, '');
+// 兜底默认值：空串/未配置时走同源（由 nginx 反代到后端 3000），避免误回退到海外 Render 导致小红书等请求跨境超时。
+const _rawBase = import.meta.env.VITE_API_BASE_URL;
+const API_BASE_URL = (_rawBase && String(_rawBase).trim()) ? String(_rawBase).trim().replace(/\/$/, '') : '';
 
 export function getToken() {
   return localStorage.getItem(TOKEN_KEY) || '';
