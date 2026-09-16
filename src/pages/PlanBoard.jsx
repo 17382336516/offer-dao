@@ -1152,14 +1152,6 @@ function PlanBoard() {
                 正在生成学习计划，以下基础板块将保持不变…
               </div>
             )}
-            {planData && planData?.xhsSkipped && !xhsLoggedIn && (
-              <div className="mb-6 flex items-start gap-3 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3">
-                <Info className="w-5 h-5 text-amber-500 mt-0.5 shrink-0" />
-                <p className="text-sm text-amber-700 leading-relaxed">
-                  当前未连接小红书，已基于<b>本地知识库 + 大模型预测分析</b>规划学习路线。如需更贴合真实经验，可点击右上角「生成学习路线」并扫码登录小红书，系统将自动抓取 3 篇真实学习帖子重新生成。
-                </p>
-              </div>
-            )}
             {/* 目标学习岗位 + 距离目标日 + 学习进度计划（并列指标）+ 调整计划（仿「今日任务」指标卡样式） */}
             <div className="card mb-6">
               <div className="flex items-center justify-between gap-4 flex-wrap">
