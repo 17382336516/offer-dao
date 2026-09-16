@@ -44,3 +44,6 @@ __pycache__/
 *.out
 *.txt
 *.out.txt
+
+# 个人文档（面试准备材料等，不入库）
+*.docx
