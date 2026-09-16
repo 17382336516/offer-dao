@@ -114,7 +114,8 @@ export async function generateStageSummary({ stageTitle, dailyNotes }) {
     JSON.stringify(compact),
     '\n请生成阶段知识体系文档，只输出 JSON。',
   ].join('\n');
-  const raw = await callQwen(NOVAFORGE_SYSTEM_PROMPT, userPrompt, 'qwen-plus');
+  // 不写死 qwen-plus（免费额度已耗尽，403）；未配置时由内置模型链兜底
+  const raw = await callQwen(NOVAFORGE_SYSTEM_PROMPT, userPrompt, (process.env.QWEN_MODEL || '').trim() || undefined);
   return normalizeStageNote(raw, stageTitle);
 }
 

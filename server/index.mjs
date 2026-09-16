@@ -2091,7 +2091,8 @@ normalized_question 规则（严格遵守）：
 - 同类问题无论表述变化，normalized_question 必须完全一致。
 只输出 JSON：{"basic":[...],"product":[...],"project":[...]}。`;
               const usrXhs = `公司：${company}\n岗位：${role}\n轮次：${round}\n\n【小红书面经帖】\n标题：${d.title}\n正文：${d.content}`;
-              const rawX = await plan.callQwen(sysXhs, usrXhs, process.env.QWEN_MODEL || 'qwen-turbo');
+              // qwen-turbo 免费额度已耗尽（403），不再作为兜底；未配置时走内置模型链
+              const rawX = await plan.callQwen(sysXhs, usrXhs, process.env.QWEN_MODEL || undefined);
               const grp = normalizeInterviewGroups(parseInterviewJson(rawX));
               const TYPE_MAP_X = { basic: '基础问题', product: '场景问题', project: '项目问题' };
               for (const [type, items] of Object.entries(grp)) {
@@ -2152,7 +2153,7 @@ normalized_question 规则（严格遵守，否则视为格式错误）：
             const user = `公司：${company}\n岗位：${role}\n轮次：${round}\n（以下仅为本次新增素材，不要参考任何历史输出）\n\n【本次新增小红书面经】\n${xhsText || '（无）'}\n\n【本次新增常考问题】\n${ragText || '（无）'}`;
             const raw = process.env.INTERVIEW_LLM_MOCK === '1'
               ? { basic: [{ question: `${company}${role}面试中最需要说明什么？`, normalized_question: 'interview_key_points', answer: '围绕目标、方法、结果和复盘，使用具体项目事实回答。' }], product: [{ question: '如何分析一个AI产品需求？', normalized_question: 'AI_product_requirement_analysis', framework: '用户问题→场景优先级→方案取舍→指标验证。' }], project: [{ question: '请介绍一个与你申请岗位相关的项目。', normalized_question: 'AI_project_experience', direction: '准备背景、个人职责、关键决策、结果数据和复盘。' }] }
-              : await plan.callQwen(system, user, process.env.QWEN_MODEL || 'qwen-turbo');
+              : await plan.callQwen(system, user, process.env.QWEN_MODEL || undefined);
             increment = normalizeInterviewGroups(parseInterviewJson(raw));
             console.log('[interview-exp/output]', JSON.stringify({ basic: increment.basic.length, product: increment.product.length, project: increment.project.length }));
             llmUsed = true;
@@ -3803,7 +3804,7 @@ ${ragText}`;
       try {
         const sys = '你是内容相关性判别器。只回答 yes 或 no，不要解释。';
         const usr = `学习任务主题：${anchor}\n\n待判断的字幕片段：\n${String(partText).slice(0, 800)}\n\n这段字幕是否与上述学习任务主题相关？回答 yes 或 no。`;
-        const r = await plan.callQwen(sys, usr, process.env.NOTE_LLM_MOCK === '1' ? 'qwen-turbo' : undefined);
+        const r = await plan.callQwen(sys, usr, undefined);
         return /yes/i.test(String(r || ''));
       } catch {
         return true; // 判定失败时保守保留，交给 Prompt 兜底

@@ -5,6 +5,7 @@ import fs from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
+import { resolveDefaultModel } from './plan.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ENTRY = path.resolve(__dirname, '../node_modules/mcp-jobs/dist/mcp.js');
@@ -272,7 +273,8 @@ async function llmSummarize(jobs, keyword, opts = {}) {
   const { bigTechCount = 0, campusCount = 0 } = opts;
   const apiKey = process.env.DASHSCOPE_API_KEY;
   if (!apiKey) throw new Error('未配置 DASHSCOPE_API_KEY，已回退规则法');
-  const model = process.env.QWEN_MODEL || 'qwen-plus';
+  // 旧兜底 qwen-plus 免费额度已耗尽（403），改由统一函数解析默认模型
+  const model = resolveDefaultModel();
   const corpus = jobs
     .map((j, i) => `${i + 1}.【${j.company || ''}】${j.title || ''} ${(j.raw || '').slice(0, 240)}`)
     .join('\n');
@@ -347,7 +349,7 @@ async function buildMarketFallback(keyword) {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
     body: JSON.stringify({
-      model: process.env.QWEN_MODEL || 'qwen-plus',
+      model: resolveDefaultModel(),
       messages: [
         {
           role: 'system',

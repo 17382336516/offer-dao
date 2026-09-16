@@ -3,9 +3,11 @@
 // 严格约束：模型只负责理解+整理，绝不生成新的 B站链接 / PDF / 章节 / 学习内容。
 import { callQwen } from './plan.mjs';
 
-// 统一使用 .env 中的 QWEN_MODEL（如 qwen-flash / qwen-turbo / qwen-plus），
-// 不再写死模型名，保证配置生效且调用 callQwen 时不会覆盖环境变量。
-const NOTE_MODEL = process.env.QWEN_MODEL || 'qwen-turbo';
+// 统一使用 .env 中的 QWEN_MODEL（支持逗号分隔候选链）；未配置时传 undefined，
+// 由 plan.mjs 的内置默认模型链兜底。
+// 切勿兜底到 qwen-turbo：该旧命名系列免费额度已耗尽，调用直接 403
+// （Free quota exhausted），会导致笔记生成整体失败。
+const NOTE_MODEL = (process.env.QWEN_MODEL || '').trim() || undefined;
 
 
 // 单段合并上限（字符数），超过则先做分段小结再汇总，控制 token。
@@ -125,7 +127,7 @@ function buildUserPrompt({ taskTitle, skill, resourceTitles, videoNotes, pdfChun
 
 // 若材料过长（如整本 PDF），先按块做结构化小结，再汇总为最终笔记。
 // 优化C-2：整本 PDF 不再被单次截断喂丢内容——按 CHUNK_SUMMARY_LIMIT 切块，
-// 每块用 qwen-turbo 产出完整 8 字段小结，最后 qwen-plus 把所有块的结构化小结合并为一份。
+// 每块用 NOTE_MODEL 产出完整 8 字段小结，最后再由模型把所有块的结构化小结合并为一份。
 async function chunkedSummarize({ taskTitle, skill, resourceTitles, videoNotes, pdfChunks }) {
   const combined = `${videoNotes || ''}\n${pdfChunks || ''}`;
   if (combined.length <= CHUNK_SUMMARY_LIMIT) {
@@ -147,7 +149,7 @@ async function chunkedSummarize({ taskTitle, skill, resourceTitles, videoNotes, 
     );
     subNotes.push(safeParseNote(s, skill));
   }
-  // 把所有块的结构化小结作为数组整体交给 qwen-plus 汇总，确保各块要点都不遗漏
+  // 把所有块的结构化小结作为数组整体交给模型汇总，确保各块要点都不遗漏
   const merged = `【技能】${skill || ''}\n以下是分段小结（共 ${subNotes.length} 段），请汇总为一份最终结构化学习笔记，保留所有要点：\n` +
     JSON.stringify(subNotes, null, 2);
   return callQwen(buildSystemPrompt({ taskTitle, skill, resourceTitles }), merged, NOTE_MODEL);

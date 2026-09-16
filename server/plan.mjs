@@ -245,26 +245,37 @@ function safeJson(s) {
 // 这里改为「模型链 + 自动降级」：依次尝试候选模型，任一成功即返回；全部失败才抛出，
 // 由上层降级到 skillNormalizer 的内置技能目录（保证永远有可用路线）。
 // 默认链按「余额充足 + 有效期长」排序，可用 .env 的 QWEN_MODEL（逗号分隔）覆盖。
-// 默认模型链：全部来自百炼免费额度清单中的「大语言模型」（排除视觉/语音/向量模型），
-// 排序原则：flash 类（响应快、成本低）优先，其次有效期更长的，超大模型放在最后兜底。
+// 默认模型链：10 个，全部取自百炼免费额度清单中的「大语言模型」
+// （排除视觉 / 语音 / 向量模型，也排除已耗尽额度的旧命名 qwen-turbo 等）。
+// 排序原则：flash 类（响应快、成本低）优先 → 有效期长 / 余额多的 → qwen3.8-27b 最终保底。
 // 任一模型额度耗尽 / 限流 / 下线，自动切换到下一个可用模型。
+// 未纳入的两个（qwen3.7-flash、qwen3.7-flash-2026-07-15）有效期仅 36 天且剩余额度最少，
+// 仅作为历史配置兼容，不参与默认链。
 const DEFAULT_MODEL_CHAIN = [
-  'qwen3.8-flash',
-  'deepseek-v4.1-flash',
-  'qwen3.8-max-0902',
-  'glm-5.3',
-  'qwen3.8-27b',
-  'kimi-k3',
-  'deepseek-v4-pro-0813',
-  'qwen3.8-max',
-  'deepseek-v4-flash-0731',
-  'qwen3.7-flash',
-  'qwen3.8-2.4t-a95b',
-  'qwen3.7-flash-2026-07-15',
+  'qwen3.8-flash',           // 964.59K，剩余 69 天
+  'deepseek-v4.1-flash',     // 999.71K，剩余 87 天
+  'deepseek-v4-flash-0731',  // 999.75K，剩余 44 天
+  'kimi-k3',                 // 999.56K，剩余 62 天
+  'glm-5.3',                 // 999.75K，剩余 67 天
+  'qwen3.8-max-0902',        // 999.67K，剩余 75 天
+  'qwen3.8-max',             // 999.75K，剩余 45 天
+  'deepseek-v4-pro-0813',    // 999.53K，剩余 57 天
+  'qwen3.8-2.4t-a95b',       // 999.76K，剩余 56 天
+  'qwen3.8-27b',             // 999.65K，剩余 62 天 —— 最终保底
 ];
 
+// 旧命名模型（qwen-turbo / qwen-plus / qwen-max / qwen-flash）免费额度已耗尽，
+// 调用会直接返回 403 Free quota exhausted，因此绝不能再作为任何默认值。
+// 需要「一个具体模型名」的调用方（例如 boss.mjs 直接 fetch）统一用本函数取默认值：
+// 优先 .env 的 QWEN_MODEL（支持逗号分隔候选链，取第一个），否则用内置链首个模型。
+export function resolveDefaultModel() {
+  const configured = String(process.env.QWEN_MODEL || '').trim();
+  const first = configured.split(',')[0].trim();
+  return first || DEFAULT_MODEL_CHAIN[0];
+}
+
 // ---------- 模型健康度：粘性优先 + 失败熔断 ----------
-// 目的：避免每个失败模型都在每次请求里被重试一遍（12 个模型逐个超时会拖垮整体耗时）。
+// 目的：避免每个失败模型都在每次请求里被重试一遍（10 个模型逐个超时会拖垮整体耗时）。
 const MODEL_FAIL_COOLDOWN_MS = Number(process.env.LLM_MODEL_COOLDOWN_MS || 10 * 60 * 1000); // 默认 10 分钟
 const MODEL_HARD_FAIL_COOLDOWN_MS = 6 * 60 * 60 * 1000; // 模型不存在等永久性错误：冷却 6 小时
 const _modelFailUntil = new Map();
@@ -286,18 +297,26 @@ function orderChainByHealth(chain) {
 function markModelFailed(model, err) {
   const msg = String((err && err.message) || '');
   // 「模型不存在/不支持」类错误属于永久性失败，冷却更久，避免每次都白等一次网络往返
-  const hard = /404|400|not\s*found|does not exist|不存在|不支持|unknown model/i.test(msg);
+  // 403 免费额度耗尽（Free quota exhausted / quota）同样按永久性失败处理：
+  // 额度通常按天重置，10 分钟冷却只会让每个请求都白试一次。
+  const hard = /404|400|not\s*found|does not exist|不存在|不支持|unknown model|quota|额度|exhausted|insufficient/i.test(msg);
   const until = Date.now() + (hard ? MODEL_HARD_FAIL_COOLDOWN_MS : MODEL_FAIL_COOLDOWN_MS);
   _modelFailUntil.set(model, until);
   console.warn(`[callLLM] 模型进入冷却: ${model} (${hard ? '6h-硬失败' : Math.round(MODEL_FAIL_COOLDOWN_MS / 60000) + 'min'})`);
 }
 
 function resolveModelChain(explicitModel) {
-  // 显式指定单个模型时不降级（尊重调用方意图）
-  if (explicitModel) return [explicitModel];
-  const configured = String(process.env.QWEN_MODEL || '').trim();
-  if (configured) return configured.split(',').map((s) => s.trim()).filter(Boolean);
-  return DEFAULT_MODEL_CHAIN;
+  // 兜底链：.env 的 QWEN_MODEL（支持逗号分隔多个）优先，再用内置默认链补齐。
+  // 关键：即使 QWEN_MODEL 只配了 1 个模型，也要补上默认链——否则该模型额度耗尽/
+  // 超时/下线时，整条链路仍然一个备用都没有，直接失败。
+  const configured = String(process.env.QWEN_MODEL || '')
+    .split(',').map((s) => s.trim()).filter(Boolean);
+  const fallback = [...configured, ...DEFAULT_MODEL_CHAIN.filter((m) => !configured.includes(m))];
+  if (!explicitModel) return fallback;
+  // 显式指定的模型作为首选（尊重调用方意图），但后面必须拼接兜底链。
+  // 否则「显式传单个模型」的调用方（如笔记生成的 NOTE_MODEL）在遇到
+  // 403 免费额度耗尽 / 限流 / 模型下线时会直接整体失败，一个备用模型都不试。
+  return [explicitModel, ...fallback.filter((m) => m !== explicitModel)];
 }
 
 // 部分模型（如 kimi-k3）不接受 temperature 参数，会返回 400。
