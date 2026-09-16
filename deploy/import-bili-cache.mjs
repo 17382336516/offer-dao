@@ -25,6 +25,10 @@ console.log('种子数据: 关键词=' + searches.length + ' 视频=' + videos.l
 const dbMod = await import(pathToFileURL(path.join(APP_DIR, 'server', 'db.mjs')).href);
 const plan = await import(pathToFileURL(path.join(APP_DIR, 'server', 'plan.mjs')).href);
 const db = dbMod.db;
+// 注意：T（库表快照）必须在使用前声明，否则触发 TDZ 报错
+// "ReferenceError: Cannot access 'T' before initialization"。
+// db.state 在 db.mjs 构造时已加载，这里直接取快照即可。
+const T = db.state.tables;
 
 let sOk = 0; let sFail = 0;
 for (const s of searches) {
@@ -84,7 +88,6 @@ const libPath = path.join(APP_DIR, 'data', 'bili_video_library.json');
 fs.mkdirSync(path.dirname(libPath), { recursive: true });
 fs.writeFileSync(libPath, JSON.stringify(library, null, 2), 'utf8');
 
-const T = db.state.tables;
 console.log('\n固定视频库已生成:', libPath);
 console.log('  技能数:', Object.keys(library).length, '| 每技能上限:', LIB_PER_SKILL);
 console.log('  视频总数:', Object.values(library).reduce((s, a) => s + a.length, 0));
