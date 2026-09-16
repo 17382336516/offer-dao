@@ -2665,6 +2665,15 @@ normalized_question 规则（严格遵守，否则视为格式错误）：
             }
           } catch (e) { console.warn('[plan] 小红书帖子录入 RAG 失败:', e.message); }
         }
+        // 板块为空 = 本次未生成出有效学习路线（典型原因：大模型调用失败 + 技能树为空）。
+        // 必须在此拦截：既不写库（避免空计划覆盖掉用户原有的可用计划），
+        // 也给出明确原因（而非让用户事后看到「未找到阶段计划」这类误导文案）。
+        if (!Array.isArray(data.sections) || !data.sections.length) {
+          return sendJson(res, 502, {
+            error: '本次未生成出任何学习板块，已中止保存（原学习路线未被覆盖）。通常是大模型调用失败导致，请检查 DASHSCOPE_API_KEY 是否有效/有额度后重试',
+            code: 'EMPTY_SECTIONS',
+          });
+        }
         // 单一学习路线表：learning_plans（每用户一条，user_id 主键）
         // 同时是每日任务的唯一真源（loadStagePlanForDaily 直接读此表），杜绝双表不一致。
         // 将 days 合并进 data，保证前端 GET 能读回计划天数（原 study_plans 有独立 days 列，统一后并入 data）。
@@ -3967,7 +3976,7 @@ ${ragText}`;
       const prof = getProfile(userId);
       const startDate = prof?.startDate || null;
       const stagePlan = loadStagePlanForDaily(userId, planId);
-      if (!stagePlan) return sendJson(res, 404, { error: '未找到对应的阶段计划，请先生成阶段计划', code: 'NO_STAGE_PLAN' });
+      if (!stagePlan) return sendJson(res, 404, { error: '已保存的学习路线中没有可用板块（数据为空），请回到「学习计划」页重新生成学习路线后再重试', code: 'NO_STAGE_PLAN' });
 
       // targetDays 缺省时，优先用整体路线「系统真实设定的天数」(stagePlan.totalDays)，
       // 不再用 target_date 重新推导，确保每日切分天数与生成计划时设定的天数一致。

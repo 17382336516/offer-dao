@@ -80,6 +80,81 @@ export const AI_PM_STAGE_MAP = [
   },
 ];
 
+// =====================================================================
+// 非 AI 岗位的【内置兜底技能目录】（零 LLM、可复现）
+// 背景：AI 产品经理有 AI_PM_SKILL_CATALOG 兜底，但数据/策略/B端/C端等岗位的技能树
+//       完全依赖 LLM 抽取。一旦 LLM 不可用（欠费、限流、网络），rawSkills 为空 ->
+//       normalizeSkills 返回 0 个技能 -> buildCombinedPlan 的 fallbackSections() 无技能可用 ->
+//       sections=0 -> 写库后每日计划落库必然报「未找到对应的阶段计划」。
+//       此处为「数据产品经理」与「通用产品经理」补齐同等强度的零 LLM 兜底，
+//       保证 LLM 挂掉时仍能生成完整可用的学习路线。
+// =====================================================================
+
+// 数据产品经理能力目录
+export const DATA_PM_SKILL_CATALOG = [
+  { name: '数据分析基础', category: 'data', level: 'beginner', weight: 0.12, aliases: ['数据分析', '数据思维'] },
+  { name: 'SQL数据查询', category: 'data', level: 'beginner', weight: 0.13, aliases: ['SQL', 'SQL查询', '取数'] },
+  { name: '统计学基础', category: 'data', level: 'beginner', weight: 0.08, aliases: ['统计基础', '概率统计'] },
+  { name: '指标体系搭建', category: 'data', level: 'intermediate', weight: 0.12, aliases: ['指标体系', '指标设计', '北极星指标'] },
+  { name: '埋点与数据采集', category: 'data', level: 'intermediate', weight: 0.10, aliases: ['埋点', '数据采集', '事件设计'] },
+  { name: '数据治理与质量', category: 'data', level: 'intermediate', weight: 0.08, aliases: ['数据质量', '数据治理'] },
+  { name: '用户行为分析', category: 'data', level: 'intermediate', weight: 0.10, aliases: ['行为分析', '漏斗分析', '留存分析'] },
+  { name: 'AB实验设计', category: 'data', level: 'advanced', weight: 0.09, aliases: ['A/B测试', 'AB测试', '实验设计'] },
+  { name: '数据可视化', category: 'data', level: 'intermediate', weight: 0.08, aliases: ['可视化', '看板', 'BI报表'] },
+  { name: '数据仓库基础', category: 'data', level: 'advanced', weight: 0.09, aliases: ['数仓', '数据仓库', '数据建模'] },
+  { name: '数据产品需求管理', category: 'pm', level: 'intermediate', weight: 0.09, aliases: ['数据需求', '需求管理'] },
+  { name: '数据驱动增长', category: 'pm', level: 'advanced', weight: 0.09, aliases: ['增长分析', '数据驱动'] },
+];
+
+export const DATA_PM_STAGE_MAP = [
+  { stage: '数据基础与分析能力', searchIntent: '掌握数据分析思维、SQL 取数与基础统计方法', skills: ['数据分析基础', 'SQL数据查询', '统计学基础'] },
+  { stage: '指标体系与数据采集', searchIntent: '搭建业务指标体系，设计埋点方案并保障数据质量', skills: ['指标体系搭建', '埋点与数据采集', '数据治理与质量'] },
+  { stage: '分析实验与可视化', searchIntent: '用行为分析与 A/B 实验验证假设，并把结论可视化呈现', skills: ['用户行为分析', 'AB实验设计', '数据可视化'] },
+  { stage: '数据平台与建模', searchIntent: '理解数据仓库分层与数据建模，支撑规模化数据应用', skills: ['数据仓库基础'] },
+  { stage: '数据驱动落地', searchIntent: '把数据结论转化为产品需求与增长动作', skills: ['数据产品需求管理', '数据驱动增长'] },
+];
+
+// 通用产品经理兜底目录（非 AI、非数据岗时使用）
+export const GENERAL_PM_SKILL_CATALOG = [
+  { name: '产品基础认知', category: 'pm', level: 'beginner', weight: 0.12, aliases: ['产品经理基础', '产品认知'] },
+  { name: '需求分析', category: 'product', level: 'beginner', weight: 0.14, aliases: ['需求拆解', '需求管理'] },
+  { name: '用户调研', category: 'product', level: 'beginner', weight: 0.10, aliases: ['用户访谈', '用户研究'] },
+  { name: '竞品分析', category: 'product', level: 'beginner', weight: 0.09, aliases: ['竞品调研'] },
+  { name: '功能设计', category: 'product', level: 'intermediate', weight: 0.14, aliases: ['产品功能设计', '方案设计'] },
+  { name: '原型设计', category: 'product', level: 'intermediate', weight: 0.08, aliases: ['原型', '交互稿'] },
+  { name: '数据分析', category: 'data', level: 'intermediate', weight: 0.11, aliases: ['数据分析', '数据指标'] },
+  { name: '项目管理', category: 'pm', level: 'intermediate', weight: 0.10, aliases: ['项目推进', '研发协作'] },
+];
+
+export const GENERAL_PM_STAGE_MAP = [
+  { stage: '产品基础认知', searchIntent: '建立产品经理角色认知与工作方法', skills: ['产品基础认知'] },
+  { stage: '需求与用户研究', searchIntent: '通过用户调研与竞品分析挖掘真实需求', skills: ['需求分析', '用户调研', '竞品分析'] },
+  { stage: '产品方案设计', searchIntent: '把需求转化为可执行的功能方案与原型', skills: ['功能设计', '原型设计'] },
+  { stage: '数据分析与验证', searchIntent: '用数据验证方案效果并持续迭代', skills: ['数据分析'] },
+  { stage: '项目落地与协作', searchIntent: '推动研发落地与跨团队协作', skills: ['项目管理'] },
+];
+
+export function isDataProductManagerJob(job = '') {
+  return /数据\s*产品|数据分析\s*师|BI\s*产品/i.test(String(job || ''));
+}
+
+// 把内置目录转换为技能树形态（与 AI 产品经理分支的返回结构保持一致）
+function buildCatalogSkills(catalog, stageMap) {
+  return catalog.map((s) => {
+    const st = stageMap.find((m) => m.skills.includes(s.name));
+    return {
+      skill_id: makeSkillId(s.name),
+      standard_name: s.name,
+      aliases: [s.name, ...(s.aliases || [])],
+      category: s.category,
+      level: s.level,
+      weight: typeof s.weight === 'number' ? s.weight : 0.1,
+      stage: st ? st.stage : '',
+      searchIntent: st ? st.searchIntent : '',
+    };
+  });
+}
+
 // 普通（非 AI）产品技能黑名单：AI 产品经理链路出现这些名字时一律剔除，
 // 避免阶段技能退化成普通产品经理能力。
 export const AI_PM_FORBIDDEN_SKILLS = [
@@ -258,6 +333,23 @@ export function normalizeSkills({ job = '', skills = [] } = {}) {
       byStd.set(key, rec);
       out.push(rec);
     }
+  }
+  // 【兜底】LLM 技能抽取返回空（欠费/限流/网络失败）时，按岗位返回内置能力目录。
+  // 否则下游 buildCombinedPlan 的 fallbackSections() 会因无技能而产出 0 个板块，
+  // 表现为「学习路线生成成功，但每日计划落库失败：未找到对应的阶段计划」。
+  if (!out.length) {
+    const isDataPm = isDataProductManagerJob(job);
+    const skills = buildCatalogSkills(
+      isDataPm ? DATA_PM_SKILL_CATALOG : GENERAL_PM_SKILL_CATALOG,
+      isDataPm ? DATA_PM_STAGE_MAP : GENERAL_PM_STAGE_MAP,
+    );
+    console.warn(`[skillNormalizer] 技能树抽取为空，已启用内置目录兜底: job=${job}, 技能数=${skills.length}`);
+    return {
+      job: String(job || '').trim(),
+      skills,
+      dropped: [],
+      usedFallbackCatalog: true,
+    };
   }
   return { job: String(job || '').trim(), skills: out };
 }
