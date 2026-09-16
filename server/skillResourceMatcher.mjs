@@ -12,6 +12,10 @@ import { searchBilibiliVideos } from './plan.mjs';
 // P0：AI 领域硬过滤正则（模块级，供 matchVideoResources 等函数复用）
 const AI_DOMAIN_RE = /(AI|人工智能|大模型|LLM|GPT|AIGC|Agent|智能体|RAG|Prompt|提示词|知识库|Dify|Coze|LangChain|Workflow|工作流|ChatGPT|Claude|GPT-4|文心一言|通义千问|多模态|扩散模型|Transformer|向量数据库|Embedding|微调|MCP)/i;
 
+// 游客态（未配 BILI_COOKIE）下 B站不返回字幕，若严格执行「必须有字幕」会导致视频全被剔除。
+// 置为 1 时放宽该约束，保证计划里仍有真实视频。默认 0（保持原有严格策略）。
+const ALLOW_NO_SUBTITLE = String(process.env.BILI_ALLOW_NO_SUBTITLE || '').trim() === '1';
+
 // P1：AI 产品经理岗位匹配评分（模块级，供 matchPdfResources / matchVideoResources 复用）
 const JOB_FIT_PRODUCT_RE = /(产品|产品设计|AI应用|应用落地|业务场景|用户场景|案例|工作流|企业应用|落地|需求|方案设计|PRD|商业化|产品设计方法|产品架构|产品经|需求分析|需求拆解|用户研究|用户洞察|功能设计|项目|协作|产品经理)/i;
 const JOB_FIT_ENGINEER_RE = /(源码|代码实现|手撕|手写|从零实现|训练|算法原理|论文|部署|CUDA|PyTorch|TensorFlow|微调|模型训练|底层原理|底层实现|原理推导|推导|公式推导|并发|分布式|后端架构|前端框架|源码解析|debug|调参|GPU|显卡)/i;
@@ -814,7 +818,11 @@ export async function matchVideoResources(skills, {
       const desc = String(v.description || v.desc || '');
       if (!AI_DOMAIN_RE.test(title) && !AI_DOMAIN_RE.test(desc)) continue;
       // 仅收录「有公开字幕」的 B站视频（无字幕无法生成笔记，入口已保证不串号）
-      if (v?.platform === 'bilibili' && v.hasSubtitle === false) continue;
+      // 例外：B站字幕接口在游客态（无 BILI_COOKIE）不返回任何字幕条目，
+      // 会导致所有视频都因 hasSubtitle=false 被整体剔除、计划完全没有视频。
+      // 设置 BILI_ALLOW_NO_SUBTITLE=1 时放宽该硬过滤：视频仍真实、可展示与排进每日任务，
+      // 只是后续「基于视频字幕生成笔记」这块素材会缺失（笔记可改用 PDF 内容生成）。
+      if (v?.platform === 'bilibili' && v.hasSubtitle === false && !ALLOW_NO_SUBTITLE) continue;
 
       const bvid = String(link).match(/BV\w+/)?.[0] || '';
       // 缓存复用：30 天内直接取历史评分，跳过本地重算（降低重复评分计算成本）。
