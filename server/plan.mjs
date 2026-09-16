@@ -245,17 +245,53 @@ function safeJson(s) {
 // 这里改为「模型链 + 自动降级」：依次尝试候选模型，任一成功即返回；全部失败才抛出，
 // 由上层降级到 skillNormalizer 的内置技能目录（保证永远有可用路线）。
 // 默认链按「余额充足 + 有效期长」排序，可用 .env 的 QWEN_MODEL（逗号分隔）覆盖。
+// 默认模型链：全部来自百炼免费额度清单中的「大语言模型」（排除视觉/语音/向量模型），
+// 排序原则：flash 类（响应快、成本低）优先，其次有效期更长的，超大模型放在最后兜底。
+// 任一模型额度耗尽 / 限流 / 下线，自动切换到下一个可用模型。
 const DEFAULT_MODEL_CHAIN = [
   'qwen3.8-flash',
-  'qwen3.8-max-0902',
   'deepseek-v4.1-flash',
+  'qwen3.8-max-0902',
   'glm-5.3',
   'qwen3.8-27b',
   'kimi-k3',
   'deepseek-v4-pro-0813',
   'qwen3.8-max',
+  'deepseek-v4-flash-0731',
   'qwen3.7-flash',
+  'qwen3.8-2.4t-a95b',
+  'qwen3.7-flash-2026-07-15',
 ];
+
+// ---------- 模型健康度：粘性优先 + 失败熔断 ----------
+// 目的：避免每个失败模型都在每次请求里被重试一遍（12 个模型逐个超时会拖垮整体耗时）。
+const MODEL_FAIL_COOLDOWN_MS = Number(process.env.LLM_MODEL_COOLDOWN_MS || 10 * 60 * 1000); // 默认 10 分钟
+const MODEL_HARD_FAIL_COOLDOWN_MS = 6 * 60 * 60 * 1000; // 模型不存在等永久性错误：冷却 6 小时
+const _modelFailUntil = new Map();
+let _lastOkModel = null;
+
+function orderChainByHealth(chain) {
+  const now = Date.now();
+  const healthy = [];
+  const cooling = [];
+  for (const m of chain) {
+    ((_modelFailUntil.get(m) || 0) > now ? cooling : healthy).push(m);
+  }
+  // 上次成功的模型优先（sticky），避免每次都从第 1 个开始试探
+  if (_lastOkModel) {
+    healthy.sort((a, b) => (b === _lastOkModel ? 1 : 0) - (a === _lastOkModel ? 1 : 0));
+  }
+  return [...healthy, ...cooling]; // 冷却中的排最后，仍保留作为最终兜底
+}
+function markModelFailed(model, err) {
+  const msg = String((err && err.message) || '');
+  // 「模型不存在/不支持」类错误属于永久性失败，冷却更久，避免每次都白等一次网络往返
+  const hard = /404|400|not\s*found|does not exist|不存在|不支持|unknown model/i.test(msg);
+  const until = Date.now() + (hard ? MODEL_HARD_FAIL_COOLDOWN_MS : MODEL_FAIL_COOLDOWN_MS);
+  _modelFailUntil.set(model, until);
+  console.warn(`[callLLM] 模型进入冷却: ${model} (${hard ? '6h-硬失败' : Math.round(MODEL_FAIL_COOLDOWN_MS / 60000) + 'min'})`);
+}
+
 function resolveModelChain(explicitModel) {
   // 显式指定单个模型时不降级（尊重调用方意图）
   if (explicitModel) return [explicitModel];
@@ -264,7 +300,11 @@ function resolveModelChain(explicitModel) {
   return DEFAULT_MODEL_CHAIN;
 }
 
-// 单次模型调用（含 429 退避重试与超时重试），失败抛错交给外层切换下一个模型
+// 部分模型（如 kimi-k3）不接受 temperature 参数，会返回 400。
+// 这里按模型记录，下次直接省略该参数，避免每个此类模型都白失败一次。
+const _noTemperatureModels = new Set();
+
+// 单次模型调用（含 429 退避重试、超时重试、不支持 temperature 自动重试），失败抛错交给外层切换下一个模型
 async function callOnce(system, userContent, model, CALL_TIMEOUT) {
   const apiKey = process.env.DASHSCOPE_API_KEY;
   const MAX_RETRY = 1;
@@ -282,11 +322,24 @@ async function callOnce(system, userContent, model, CALL_TIMEOUT) {
             { role: 'system', content: system },
             { role: 'user', content: userContent },
           ],
-          temperature: 0.4,
+          // undefined 字段会被 JSON.stringify 自动忽略
+          temperature: _noTemperatureModels.has(model) ? undefined : 0.4,
           response_format: { type: 'json_object' },
         }),
         signal: controller.signal,
       });
+      if (res.status === 400) {
+        const t400 = await res.text().catch(() => '');
+        // 该模型不支持 temperature：记住并立即用无 temperature 重试
+        if (/temperature/i.test(t400) && !_noTemperatureModels.has(model)) {
+          clearTimeout(timer);
+          _noTemperatureModels.add(model);
+          console.warn(`[callLLM] 模型 ${model} 不支持 temperature，已移除该参数重试`);
+          lastErr = new Error('400: 不支持 temperature 参数');
+          continue;
+        }
+        throw new Error(`400: ${t400.slice(0, 200)}`);
+      }
       if (res.status === 429) {
         clearTimeout(timer);
         const wait = (attempt + 1) * 3000;
@@ -327,21 +380,26 @@ export async function callQwen(system, user, model, timeoutMs) {
     userContent = `${userContent}\n请以 JSON 格式输出。`.trim();
   }
   const CALL_TIMEOUT = Number(timeoutMs || process.env.QWEN_TIMEOUT_MS || 15000);
+  // 按健康度排序：可用且上次成功的排前面，处于冷却期的排最后
+  const ordered = chain.length > 1 ? orderChainByHealth(chain) : chain;
   const errors = [];
-  for (const m of chain) {
+  for (const m of ordered) {
     try {
       const content = await callOnce(system, userContent, m, CALL_TIMEOUT);
       if (content) {
-        if (m !== chain[0]) console.warn(`[callLLM] 已降级到备用模型: ${m}`);
+        _lastOkModel = m;
+        _modelFailUntil.delete(m);
+        if (m !== ordered[0]) console.warn(`[callLLM] 本次实际使用模型: ${m}`);
         return content;
       }
       errors.push(`${m}: 返回空内容`);
+      markModelFailed(m, new Error('empty content'));
     } catch (e) {
       errors.push(`${m}: ${e.message}`);
-      console.warn(`[callLLM] 模型 ${m} 调用失败，尝试下一个: ${e.message}`);
+      markModelFailed(m, e);
     }
   }
-  throw new Error(`全部模型调用失败（已尝试 ${chain.length} 个）: ${errors.join(' | ').slice(0, 400)}`);
+  throw new Error(`全部模型调用失败（已尝试 ${ordered.length} 个）: ${errors.join(' | ').slice(0, 400)}`);
 }
 
 // ---------- 小红书 MCP 调用 ----------
