@@ -1811,9 +1811,17 @@ const server = http.createServer(async (req, res) => {
           .concat(Object.keys(skillsByStage).filter((st) => !(stageMap.find((m) => m.stage === st))));
         const stages = orderedStages.map((stageName, idx) => {
           const skills = (skillsByStage[stageName] || []).map((s) => {
-            const terms = Array.isArray(s.searchTerms) ? s.searchTerms : [];
+            const skillName = s.standard_name || s.name || '';
+            // 搜索词兜底：searchTerms 来自「本次小红书/面经」提取的趋势词，
+            // 若本次未抓到小红书（未登录/无结果），技能树走内置目录、该字段天然为空，
+            // 会导致能力地图三级全部显示「暂无搜索词」。
+            // 这里用真实技能名兜底（技能名本身就是合法的检索词，不编造内容），
+            // 有趋势词时仍优先展示趋势词。
+            const terms = (Array.isArray(s.searchTerms) && s.searchTerms.length)
+              ? s.searchTerms
+              : [skillName].filter(Boolean);
             return {
-              skillName: s.standard_name || s.name,
+              skillName,
               category: s.category,
               level: s.level,
               weight: s.weight,
