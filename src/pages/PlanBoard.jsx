@@ -743,6 +743,9 @@ function PlanBoard() {
 
   // 选择「不登录小红书，使用知识库预测」：直接基于 RAG + 大模型预测生成
   const chooseSkipXhs = async () => {
+    // 先关闭「模式选择」弹窗：runGenerate 在已存在计划时会先弹「覆盖确认」并 return，
+    // 不会执行到内部的 setShowGenModal(false)，导致选择框一直挂在后面。
+    setShowGenModal(false);
     await runGenerate({ skipXhs: true });
   };
 
