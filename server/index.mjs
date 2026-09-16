@@ -5567,6 +5567,13 @@ ${ragText}`;
   }
 });
 
+// 长耗时接口（笔记生成 / 计划生成：抓字幕 + 多次大模型调用）可能超过 Node 默认 300s 的
+// requestTimeout，会被框架直接销毁连接（前端表现为 504/无响应）。这里显式关闭请求体超时上限，
+// 由业务侧自己的 DDL 日志（NOTE_TIMEOUT_MS）负责观测耗时，不再被 HTTP 层强制掐断。
+server.requestTimeout = 0;
+server.headersTimeout = 0;
+server.keepAliveTimeout = 120000;
+
 scheduleDailyBossRefresh();
 server.listen(PORT, () => {
   console.log(`[server] API 服务已启动: http://localhost:${PORT}`);

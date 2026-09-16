@@ -17,8 +17,9 @@ async function apiFetch(path, options = {}) {
   const token = getToken();
   if (token) headers['Authorization'] = `Bearer ${token}`;
   // 前端统一超时：避免耗时请求无响应时界面一直转圈。
-  // 默认 300s；生成学习计划（小红书抓取 + 大模型多次调用）耗时较长，调用方可传入更高 timeout。
-  const timeoutMs = Number(options.timeout) || 300000;
+  // 默认 1800s（30min）：笔记/计划生成链路（抓小红书、抓 B 站字幕、大模型多轮调用）在云端可能很慢，
+  // 前端不主动中断，由后端进度接口 /api/learning-note/progress 反馈真实进度。
+  const timeoutMs = Number(options.timeout) || 1800000;
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   let res;
