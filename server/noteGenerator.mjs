@@ -11,7 +11,15 @@ const NOTE_MODEL = (process.env.QWEN_MODEL || '').trim() || undefined;
 
 
 // 单段合并上限（字符数），超过则先做分段小结再汇总，控制 token。
-const CHUNK_SUMMARY_LIMIT = 6000;
+// 原值 6000 会让 4.5 万字的材料切成 8 段 → 8 次大模型串行调用，单次链路几分钟起步，
+// 必然超过网关（nginx 120s）超时被掐成 504。这里放大到 12000，把调用次数压到 2-3 次。
+const CHUNK_SUMMARY_LIMIT = 12000;
+// 送入大模型的材料总上限（字符）：先保视频字幕，剩余额度给 PDF，杜绝整本 PDF 全量入参。
+const MAX_MATERIAL_CHARS = 24000;
+const VIDEO_MATERIAL_MAX = 8000;
+// 单次大模型调用超时（毫秒）。显式传入，避免沿用 callQwen 默认 15s 导致频繁重试、
+// 也避免云端 QWEN_TIMEOUT_MS 配得过大时单卡 8 分钟把整条链路拖爆。
+const NOTE_LLM_TIMEOUT_MS = Number(process.env.NOTE_LLM_TIMEOUT_MS) || 120000;
 
 // —— 测试模式：不调用大模型，节省 token ——
 // 开启方式：环境变量 NOTE_LLM_MOCK=1（或 LLM_MOCK=1）。
@@ -129,30 +137,38 @@ function buildUserPrompt({ taskTitle, skill, resourceTitles, videoNotes, pdfChun
 // 优化C-2：整本 PDF 不再被单次截断喂丢内容——按 CHUNK_SUMMARY_LIMIT 切块，
 // 每块用 NOTE_MODEL 产出完整 8 字段小结，最后再由模型把所有块的结构化小结合并为一份。
 async function chunkedSummarize({ taskTitle, skill, resourceTitles, videoNotes, pdfChunks }) {
-  const combined = `${videoNotes || ''}\n${pdfChunks || ''}`;
+  // 先按总上限裁剪材料：视频字幕优先，剩余额度给 PDF。
+  // 不裁剪时 4.5 万字材料会切成 8 段、串行调用 8 次大模型，是 504 的直接成因。
+  const v = String(videoNotes || '').trim();
+  const p = String(pdfChunks || '').trim();
+  const vKept = v.length > VIDEO_MATERIAL_MAX ? v.slice(0, VIDEO_MATERIAL_MAX) : v;
+  const pMax = Math.max(0, MAX_MATERIAL_CHARS - vKept.length);
+  const pKept = p.length > pMax ? p.slice(0, pMax) : p;
+  const combined = `${vKept}\n${pKept}`;
   if (combined.length <= CHUNK_SUMMARY_LIMIT) {
-    return callQwen(buildSystemPrompt({ taskTitle, skill, resourceTitles }), buildUserPrompt({ taskTitle, skill, resourceTitles, videoNotes, pdfChunks }), NOTE_MODEL);
+    return callQwen(buildSystemPrompt({ taskTitle, skill, resourceTitles }), buildUserPrompt({ taskTitle, skill, resourceTitles, videoNotes: vKept, pdfChunks: pKept }), NOTE_MODEL, NOTE_LLM_TIMEOUT_MS);
   }
-  // 整本材料切块（视频+PDF 合并后均匀切片，覆盖全部内容，不丢任何一段）
+  // 按上限切块（最多 3 块，控制调用次数与总耗时）
+  const text = `视频内容：\n${vKept}\n\nPDF内容：\n${pKept}`;
   const blocks = [];
-  const text = `视频内容：\n${videoNotes || ''}\n\nPDF内容：\n${pdfChunks || ''}`;
-  for (let i = 0; i < text.length; i += CHUNK_SUMMARY_LIMIT) {
+  for (let i = 0; i < text.length && blocks.length < 3; i += CHUNK_SUMMARY_LIMIT) {
     blocks.push(text.slice(i, i + CHUNK_SUMMARY_LIMIT));
   }
-  const subNotes = [];
-  for (const b of blocks) {
-    // 每块小结保留最终笔记结构，供最终汇总对齐
-    const s = await callQwen(
+  console.log('[learning-note/llm] 材料裁剪后长度=', text.length, '分块数=', blocks.length, '单次超时=', NOTE_LLM_TIMEOUT_MS);
+  // 并行小结：块数已压到 2-3 块，并行可把等待时间从「N × 单次耗时」降到「1 × 单次耗时」
+  const subNotes = await Promise.all(blocks.map(async (b) => safeParseNote(
+    await callQwen(
       '你是学习笔记助手。请把下面这段学习材料提炼为结构化笔记（只输出完整 JSON：{"title":"","subtitle":"","summary":"","key_points":[],"mind_map":{"root":"","children":[]},"user_note":""}），只基于材料、不要编造任何材料外的内容。',
       b,
-      NOTE_MODEL
-    );
-    subNotes.push(safeParseNote(s, skill));
-  }
+      NOTE_MODEL,
+      NOTE_LLM_TIMEOUT_MS
+    ),
+    skill
+  )));
   // 把所有块的结构化小结作为数组整体交给模型汇总，确保各块要点都不遗漏
   const merged = `【技能】${skill || ''}\n以下是分段小结（共 ${subNotes.length} 段），请汇总为一份最终结构化学习笔记，保留所有要点：\n` +
     JSON.stringify(subNotes, null, 2);
-  return callQwen(buildSystemPrompt({ taskTitle, skill, resourceTitles }), merged, NOTE_MODEL);
+  return callQwen(buildSystemPrompt({ taskTitle, skill, resourceTitles }), merged, NOTE_MODEL, NOTE_LLM_TIMEOUT_MS);
 }
 
 function safeParseNote(raw, skill) {
@@ -182,7 +198,7 @@ const COMPRESS_SYSTEM_PROMPT = `你是学习笔记摘要压缩器。请把下面
 {"title":"","subtitle":"","summary":"","key_points":[],"mind_map":{"root":"","children":[]},"user_note":""}`;
 
 async function compressNote(note) {
-  const raw = await callQwen(COMPRESS_SYSTEM_PROMPT, JSON.stringify(note), NOTE_MODEL);
+  const raw = await callQwen(COMPRESS_SYSTEM_PROMPT, JSON.stringify(note), NOTE_MODEL, NOTE_LLM_TIMEOUT_MS);
   return safeParseNote(raw, note.skill);
 }
 
@@ -242,7 +258,7 @@ export async function generateNoteIncremental({ taskTitle, skill, resourceTitles
     JSON.stringify(delta),
     '\n请合并为一份最终笔记，只输出 JSON。保持主题聚焦，不要引入与学习目标无关的内容。',
   ].filter(Boolean).join('\n');
-  const raw = await callQwen(MERGE_SYSTEM_PROMPT, userPrompt, NOTE_MODEL);
+  const raw = await callQwen(MERGE_SYSTEM_PROMPT, userPrompt, NOTE_MODEL, NOTE_LLM_TIMEOUT_MS);
   return safeParseNote(raw, skill);
 }
 
