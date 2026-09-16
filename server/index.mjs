@@ -4776,6 +4776,14 @@ ${ragText}`;
           newSources.push({ type: 'video', title: info.title || '', key: c.resource_key });
           const partStr = info.part || '';
           const partSpec = parsePartSpec(partStr);
+          // NOTE_SKIP_VIDEO=1：已知视频没有字幕轨（B站 player/v2 返回 subtitles 为空）
+          // 或想省掉抓取耗时时，直接跳过字幕抓取，只用 PDF 材料生成笔记，
+          // 避免每个视频白等 45s 的子进程超时。
+          if (process.env.NOTE_SKIP_VIDEO === '1') {
+            doneJobs++;
+            setProgress('extract', 15 + Math.round((doneJobs / Math.max(totalJobs, 1)) * 45), `已跳过视频字幕（${doneJobs}/${totalJobs}）…`);
+            continue;
+          }
           if (partSpec.kind === 'range') {
             // 时间窗口（如 "24:22-48:44"）：一个P拆多天学 → 抓该P字幕后按时间窗裁剪，
             // 只把当天应学的时间段喂给大模型，避免跨天内容串味。
