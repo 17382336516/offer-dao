@@ -240,25 +240,36 @@ function safeJson(s) {
   try { return JSON.parse(s); } catch { return null; }
 }
 
-// ---------- 千问调用（qwen-turbo） ----------
-// timeoutMs：单次调用超时（毫秒）。调用方可按需传入更大值以拿到真实 LLM 返回，
-// 而非被快速 abort 降级到规则路线。默认读取 QWEN_TIMEOUT_MS，兜底 15s。
-export async function callQwen(system, user, model, timeoutMs) {
+// ---------- LLM 调用（多模型自动降级） ----------
+// 背景：百炼免费额度按模型单独计量，单一模型额度耗尽/限流/下线都会导致整条计划生成链路失败。
+// 这里改为「模型链 + 自动降级」：依次尝试候选模型，任一成功即返回；全部失败才抛出，
+// 由上层降级到 skillNormalizer 的内置技能目录（保证永远有可用路线）。
+// 默认链按「余额充足 + 有效期长」排序，可用 .env 的 QWEN_MODEL（逗号分隔）覆盖。
+const DEFAULT_MODEL_CHAIN = [
+  'qwen3.8-flash',
+  'qwen3.8-max-0902',
+  'deepseek-v4.1-flash',
+  'glm-5.3',
+  'qwen3.8-27b',
+  'kimi-k3',
+  'deepseek-v4-pro-0813',
+  'qwen3.8-max',
+  'qwen3.7-flash',
+];
+function resolveModelChain(explicitModel) {
+  // 显式指定单个模型时不降级（尊重调用方意图）
+  if (explicitModel) return [explicitModel];
+  const configured = String(process.env.QWEN_MODEL || '').trim();
+  if (configured) return configured.split(',').map((s) => s.trim()).filter(Boolean);
+  return DEFAULT_MODEL_CHAIN;
+}
+
+// 单次模型调用（含 429 退避重试与超时重试），失败抛错交给外层切换下一个模型
+async function callOnce(system, userContent, model, CALL_TIMEOUT) {
   const apiKey = process.env.DASHSCOPE_API_KEY;
-  if (!apiKey) throw new Error('未配置 DASHSCOPE_API_KEY，已回退规则模板');
-  const m = model || process.env.QWEN_MODEL || 'qwen-turbo';
-  // qwen-flash 等模型在 response_format=json_object 时，会强制校验 messages 中必须包含 "json" 字样，
-  // 否则返回 400（'messages' must contain the word 'json'）。这里统一兜底，确保通过校验。
-  let userContent = user || '';
-  if (!/json/i.test(`${system}\n${userContent}`)) {
-    userContent = `${userContent}\n请以 JSON 格式输出。`.trim();
-  }
-  // 整体预算控制在 5 分钟内：单次调用限时（默认 15s，可由调用方按需放大到 60s），
-  // 不重试（避免单步耗时翻倍拖垮总时长），超时即抛错由调用方降级（规则模板）。
   const MAX_RETRY = 1;
-  const CALL_TIMEOUT = Number(timeoutMs || process.env.QWEN_TIMEOUT_MS || 15000);
   let lastErr;
-  for (let attempt = 0; attempt < MAX_RETRY; attempt++) {
+  for (let attempt = 0; attempt <= MAX_RETRY; attempt++) {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), CALL_TIMEOUT);
     try {
@@ -266,7 +277,7 @@ export async function callQwen(system, user, model, timeoutMs) {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
         body: JSON.stringify({
-          model: m,
+          model,
           messages: [
             { role: 'system', content: system },
             { role: 'user', content: userContent },
@@ -277,32 +288,60 @@ export async function callQwen(system, user, model, timeoutMs) {
         signal: controller.signal,
       });
       if (res.status === 429) {
-        // 限流：指数退避后重试（3s / 6s / 12s）
         clearTimeout(timer);
         const wait = (attempt + 1) * 3000;
-        console.warn(`[callQwen] 429 限流，第 ${attempt + 1} 次重试，等待 ${wait}ms（model=${m}）`);
+        console.warn(`[callLLM] 429 限流，第 ${attempt + 1} 次重试，等待 ${wait}ms（model=${model}）`);
         await new Promise((r) => setTimeout(r, wait));
-        lastErr = new Error('千问接口 429: 请求频率超限');
+        lastErr = new Error(`429 限流: ${model}`);
         continue;
       }
       if (!res.ok) {
         const t = await res.text().catch(() => '');
-        throw new Error(`千问接口 ${res.status}: ${t.slice(0, 200)}`);
+        throw new Error(`${res.status}: ${t.slice(0, 200)}`);
       }
       const json = await res.json();
       return json?.choices?.[0]?.message?.content || '';
     } catch (e) {
       clearTimeout(timer);
-      // 超时（AbortError）也重试，其余（含已抛出的非429错误）不再重试
-      if (e.name === 'AbortError' && attempt < MAX_RETRY - 1) {
-        console.warn(`[callQwen] 请求超时，第 ${attempt + 1} 次重试（model=${m}）`);
+      if (e.name === 'AbortError' && attempt < MAX_RETRY) {
+        console.warn(`[callLLM] 请求超时，第 ${attempt + 1} 次重试（model=${model}）`);
         lastErr = e;
         continue;
       }
       throw e;
     }
   }
-  throw lastErr || new Error('千问接口调用失败');
+  throw lastErr || new Error(`模型 ${model} 调用失败`);
+}
+
+// timeoutMs：单次调用超时（毫秒）。调用方可按需传入更大值以拿到真实 LLM 返回，
+// 而非被快速 abort 降级。默认读取 QWEN_TIMEOUT_MS，兜底 15s。
+export async function callQwen(system, user, model, timeoutMs) {
+  const apiKey = process.env.DASHSCOPE_API_KEY;
+  if (!apiKey) throw new Error('未配置 DASHSCOPE_API_KEY，已回退规则模板');
+  const chain = resolveModelChain(model);
+  // qwen-flash 等模型在 response_format=json_object 时，会强制校验 messages 中必须包含 "json" 字样，
+  // 否则返回 400（'messages' must contain the word 'json'）。这里统一兜底，确保通过校验。
+  let userContent = user || '';
+  if (!/json/i.test(`${system}\n${userContent}`)) {
+    userContent = `${userContent}\n请以 JSON 格式输出。`.trim();
+  }
+  const CALL_TIMEOUT = Number(timeoutMs || process.env.QWEN_TIMEOUT_MS || 15000);
+  const errors = [];
+  for (const m of chain) {
+    try {
+      const content = await callOnce(system, userContent, m, CALL_TIMEOUT);
+      if (content) {
+        if (m !== chain[0]) console.warn(`[callLLM] 已降级到备用模型: ${m}`);
+        return content;
+      }
+      errors.push(`${m}: 返回空内容`);
+    } catch (e) {
+      errors.push(`${m}: ${e.message}`);
+      console.warn(`[callLLM] 模型 ${m} 调用失败，尝试下一个: ${e.message}`);
+    }
+  }
+  throw new Error(`全部模型调用失败（已尝试 ${chain.length} 个）: ${errors.join(' | ').slice(0, 400)}`);
 }
 
 // ---------- 小红书 MCP 调用 ----------
