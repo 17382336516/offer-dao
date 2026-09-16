@@ -138,6 +138,122 @@ export function isDataProductManagerJob(job = '') {
   return /数据\s*产品|数据分析\s*师|BI\s*产品/i.test(String(job || ''));
 }
 
+// =====================================================================
+// 其余预设岗位的专属技能目录（与 BOSS_DIRECTION_PRESETS 的 6 个方向一一对应）
+// 目的：每个职位都有「零 LLM」的能力地图，LLM 不可用时仍能产出贴合该岗位的学习路线，
+//       而不是全部退化成通用产品经理目录导致路线失去岗位特征。
+// =====================================================================
+
+// 策略产品经理
+export const STRATEGY_PM_SKILL_CATALOG = [
+  { name: '商业分析', category: 'pm', level: 'beginner', weight: 0.12, aliases: ['商业分析能力', 'business analysis'] },
+  { name: '行业研究', category: 'pm', level: 'beginner', weight: 0.11, aliases: ['行业分析', '赛道研究'] },
+  { name: '战略思维', category: 'pm', level: 'beginner', weight: 0.12, aliases: ['战略思考', '系统性思维'] },
+  { name: '竞争分析', category: 'pm', level: 'intermediate', weight: 0.10, aliases: ['竞争策略', '竞争壁垒'] },
+  { name: '商业模式设计', category: 'pm', level: 'intermediate', weight: 0.11, aliases: ['商业模式', '盈利模式'] },
+  { name: '用户市场洞察', category: 'product', level: 'intermediate', weight: 0.10, aliases: ['市场洞察', '用户洞察'] },
+  { name: '产品规划', category: 'product', level: 'intermediate', weight: 0.11, aliases: ['产品路线图', 'roadmap'] },
+  { name: '决策分析', category: 'data', level: 'intermediate', weight: 0.09, aliases: ['决策模型', '取舍判断'] },
+  { name: 'OKR目标管理', category: 'pm', level: 'intermediate', weight: 0.08, aliases: ['OKR', '目标拆解'] },
+  { name: '数据驱动决策', category: 'data', level: 'advanced', weight: 0.09, aliases: ['数据化决策'] },
+];
+export const STRATEGY_PM_STAGE_MAP = [
+  { stage: '商业与行业认知', searchIntent: '建立商业分析框架与行业研究方法', skills: ['商业分析', '行业研究', '战略思维'] },
+  { stage: '竞争与模式设计', searchIntent: '识别竞争壁垒并设计可持续商业模式', skills: ['竞争分析', '商业模式设计'] },
+  { stage: '市场洞察与产品规划', searchIntent: '从市场信号中提炼机会并制定产品路线图', skills: ['用户市场洞察', '产品规划'] },
+  { stage: '目标拆解与决策', searchIntent: '用 OKR 与数据完成策略落地与取舍决策', skills: ['决策分析', 'OKR目标管理', '数据驱动决策'] },
+];
+
+// 增长产品经理
+export const GROWTH_PM_SKILL_CATALOG = [
+  { name: '增长思维', category: 'pm', level: 'beginner', weight: 0.10, aliases: ['增长黑客', 'growth hacking'] },
+  { name: 'AARRR模型', category: 'pm', level: 'beginner', weight: 0.11, aliases: ['增长模型', '海盗指标'] },
+  { name: '用户拉新获客', category: 'pm', level: 'beginner', weight: 0.12, aliases: ['拉新', '获客'] },
+  { name: '留存提升', category: 'pm', level: 'intermediate', weight: 0.11, aliases: ['用户留存', '活跃提升'] },
+  { name: '社交裂变', category: 'pm', level: 'intermediate', weight: 0.10, aliases: ['裂变营销', '分享传播'] },
+  { name: '活动策划运营', category: 'pm', level: 'intermediate', weight: 0.09, aliases: ['活动运营', '策划'] },
+  { name: '付费投放ROI', category: 'pm', level: 'intermediate', weight: 0.09, aliases: ['投放', '买量', 'ROI'] },
+  { name: '增长实验', category: 'data', level: 'advanced', weight: 0.10, aliases: ['增长实验体系', '增长AB'] },
+  { name: '用户召回策略', category: 'pm', level: 'intermediate', weight: 0.08, aliases: ['召回', '流失挽回'] },
+  { name: '数据分析', category: 'data', level: 'intermediate', weight: 0.10, aliases: ['增长数据分析'] },
+];
+export const GROWTH_PM_STAGE_MAP = [
+  { stage: '增长基础与模型', searchIntent: '建立增长思维，掌握 AARRR 增长模型', skills: ['增长思维', 'AARRR模型'] },
+  { stage: '拉新与获客策划', searchIntent: '设计拉新方案、活动与裂变路径', skills: ['用户拉新获客', '社交裂变', '活动策划运营'] },
+  { stage: '留存与召回', searchIntent: '提升用户留存并对流失用户进行召回', skills: ['留存提升', '用户召回策略'] },
+  { stage: '投放与增长实验', searchIntent: '用付费投放与实验体系规模化验证增长方法', skills: ['付费投放ROI', '增长实验', '数据分析'] },
+];
+
+// B端产品经理
+export const B_END_PM_SKILL_CATALOG = [
+  { name: 'B端业务建模', category: 'pm', level: 'beginner', weight: 0.13, aliases: ['业务建模', '领域建模'] },
+  { name: '企业流程梳理', category: 'pm', level: 'beginner', weight: 0.11, aliases: ['业务流程', '流程优化'] },
+  { name: '客户需求洞察', category: 'product', level: 'beginner', weight: 0.11, aliases: ['B端需求', '客户调研'] },
+  { name: '权限体系设计', category: 'product', level: 'intermediate', weight: 0.10, aliases: ['RBAC', '权限模型'] },
+  { name: 'SaaS产品', category: 'pm', level: 'intermediate', weight: 0.11, aliases: ['SaaS', '云服务产品'] },
+  { name: '解决方案设计', category: 'pm', level: 'intermediate', weight: 0.10, aliases: ['解决方案', '售前支持'] },
+  { name: '项目实施交付', category: 'pm', level: 'intermediate', weight: 0.09, aliases: ['实施交付', '客户成功'] },
+  { name: '开放平台与API', category: 'tech', level: 'advanced', weight: 0.09, aliases: ['开放平台', 'OpenAPI'] },
+  { name: '数据报表设计', category: 'data', level: 'intermediate', weight: 0.09, aliases: ['后台报表', '管理后台'] },
+  { name: '跨部门协作', category: 'pm', level: 'intermediate', weight: 0.07, aliases: ['跨团队推进'] },
+];
+export const B_END_PM_STAGE_MAP = [
+  { stage: 'B端业务与流程', searchIntent: '掌握企业业务建模与流程梳理方法', skills: ['B端业务建模', '企业流程梳理'] },
+  { stage: '需求洞察与权限设计', searchIntent: '从客户场景中提炼需求并搭建权限体系', skills: ['客户需求洞察', '权限体系设计'] },
+  { stage: 'SaaS与解决方案', searchIntent: '理解 SaaS 产品形态并输出可交付解决方案', skills: ['SaaS产品', '解决方案设计', '项目实施交付'] },
+  { stage: '平台能力与数据', searchIntent: '通过开放平台、API 与报表能力支撑企业集成', skills: ['开放平台与API', '数据报表设计', '跨部门协作'] },
+];
+
+// C端产品经理
+export const C_END_PM_SKILL_CATALOG = [
+  { name: 'C端用户洞察', category: 'pm', level: 'beginner', weight: 0.12, aliases: ['用户洞察', 'C端用户理解'] },
+  { name: '用户体验UX', category: 'product', level: 'beginner', weight: 0.12, aliases: ['UX', '体验设计'] },
+  { name: '交互设计', category: 'product', level: 'beginner', weight: 0.10, aliases: ['交互', 'UI设计'] },
+  { name: '内容运营', category: 'pm', level: 'intermediate', weight: 0.09, aliases: ['内容策略', '内容生态'] },
+  { name: '社区运营', category: 'pm', level: 'intermediate', weight: 0.09, aliases: ['社区产品', 'UGC'] },
+  { name: '会员与激励体系', category: 'pm', level: 'intermediate', weight: 0.10, aliases: ['会员体系', '积分激励'] },
+  { name: '推荐与算法应用', category: 'tech', level: 'advanced', weight: 0.09, aliases: ['推荐系统', '算法策略'] },
+  { name: 'App产品迭代', category: 'product', level: 'intermediate', weight: 0.10, aliases: ['版本迭代', '移动产品'] },
+  { name: '数据分析', category: 'data', level: 'intermediate', weight: 0.10, aliases: ['C端数据分析'] },
+  { name: '活动策划', category: 'pm', level: 'intermediate', weight: 0.09, aliases: ['运营活动'] },
+];
+export const C_END_PM_STAGE_MAP = [
+  { stage: '用户洞察与体验', searchIntent: '理解 C 端用户并建立体验设计直觉', skills: ['C端用户洞察', '用户体验UX', '交互设计'] },
+  { stage: '内容与社区', searchIntent: '搭建内容生态与社区氛围', skills: ['内容运营', '社区运营'] },
+  { stage: '激励与算法', searchIntent: '用会员激励与推荐算法提升留存和消费', skills: ['会员与激励体系', '推荐与算法应用'] },
+  { stage: '迭代与增长', searchIntent: '通过版本迭代、活动与数据驱动持续增长', skills: ['App产品迭代', '数据分析', '活动策划'] },
+];
+
+export function isStrategyProductManagerJob(job = '') {
+  return /策略\s*产品|商业\s*策略|战略\s*产品/i.test(String(job || ''));
+}
+export function isGrowthProductManagerJob(job = '') {
+  return /增长\s*产品|用户\s*增长|growth/i.test(String(job || ''));
+}
+export function isBEndProductManagerJob(job = '') {
+  return /b\s*端|B端|企业\s*服务|saas|SaaS/i.test(String(job || ''));
+}
+export function isCEndProductManagerJob(job = '') {
+  return /c\s*端|C端|用户\s*产品|社区\s*产品/i.test(String(job || ''));
+}
+
+// 岗位 -> 内置技能目录 注册表（顺序即匹配优先级）
+// AI 岗由 isAiProductManagerJob 单独分支处理（含黑名单剔除），此处保留仅为兜底查表。
+export const JOB_SKILL_CATALOG_REGISTRY = [
+  { id: 'data', match: isDataProductManagerJob, catalog: DATA_PM_SKILL_CATALOG, stageMap: DATA_PM_STAGE_MAP },
+  { id: 'strategy', match: isStrategyProductManagerJob, catalog: STRATEGY_PM_SKILL_CATALOG, stageMap: STRATEGY_PM_STAGE_MAP },
+  { id: 'growth', match: isGrowthProductManagerJob, catalog: GROWTH_PM_SKILL_CATALOG, stageMap: GROWTH_PM_STAGE_MAP },
+  { id: 'b_end', match: isBEndProductManagerJob, catalog: B_END_PM_SKILL_CATALOG, stageMap: B_END_PM_STAGE_MAP },
+  { id: 'c_end', match: isCEndProductManagerJob, catalog: C_END_PM_SKILL_CATALOG, stageMap: C_END_PM_STAGE_MAP },
+];
+
+// 按岗位名解析出对应的内置目录；未命中时使用通用产品经理目录
+function resolveCatalogByJob(job) {
+  const hit = JOB_SKILL_CATALOG_REGISTRY.find((r) => r.match && r.match(job));
+  if (hit) return { id: hit.id, catalog: hit.catalog, stageMap: hit.stageMap };
+  return { id: 'general', catalog: GENERAL_PM_SKILL_CATALOG, stageMap: GENERAL_PM_STAGE_MAP };
+}
+
 // 把内置目录转换为技能树形态（与 AI 产品经理分支的返回结构保持一致）
 function buildCatalogSkills(catalog, stageMap) {
   return catalog.map((s) => {
@@ -338,17 +454,15 @@ export function normalizeSkills({ job = '', skills = [] } = {}) {
   // 否则下游 buildCombinedPlan 的 fallbackSections() 会因无技能而产出 0 个板块，
   // 表现为「学习路线生成成功，但每日计划落库失败：未找到对应的阶段计划」。
   if (!out.length) {
-    const isDataPm = isDataProductManagerJob(job);
-    const skills = buildCatalogSkills(
-      isDataPm ? DATA_PM_SKILL_CATALOG : GENERAL_PM_SKILL_CATALOG,
-      isDataPm ? DATA_PM_STAGE_MAP : GENERAL_PM_STAGE_MAP,
-    );
-    console.warn(`[skillNormalizer] 技能树抽取为空，已启用内置目录兜底: job=${job}, 技能数=${skills.length}`);
+    const resolved = resolveCatalogByJob(job);
+    const skills = buildCatalogSkills(resolved.catalog, resolved.stageMap);
+    console.warn(`[skillNormalizer] 技能树抽取为空，已启用内置目录兜底: job=${job}, 目录=${resolved.id}, 技能数=${skills.length}`);
     return {
       job: String(job || '').trim(),
       skills,
       dropped: [],
       usedFallbackCatalog: true,
+      catalogId: resolved.id,
     };
   }
   return { job: String(job || '').trim(), skills: out };
