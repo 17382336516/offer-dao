@@ -1,7 +1,7 @@
 // 零依赖后端：Node 内置 http + node:sqlite（真正的 SQLite 数据库）
 // 提供用户注册、登录（token 会话）与目标岗位资料的持久化存储。
 import http from 'node:http';
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { randomBytes, scryptSync, timingSafeEqual } from 'node:crypto';
 import { DatabaseSync, db } from './db.mjs';
 import { fileURLToPath } from 'node:url';
@@ -1024,6 +1024,37 @@ function getBearer(req) {
 }
 
 // ---------- 业务处理 ----------
+// —— Python 解释器探测（B站字幕抓取用）——
+// 部分服务器上的 `python` 是 3.6 / 2.7，跑 bilinote 脚本会直接抛
+// "SyntaxError: future feature annotations is not defined"（该语法需 Python 3.7+），
+// 表现为字幕恒为空（videoTextLength: 0）。这里按候选列表探测第一个 >=3.7 的解释器并缓存。
+let _pyBinCache = null;
+function resolvePythonBin() {
+  if (_pyBinCache) return _pyBinCache;
+  const candidates = [
+    process.env.PYTHON_BIN,
+    'python3', 'python3.12', 'python3.11', 'python3.10', 'python3.9', 'python3.8', 'python3.7',
+    '/usr/bin/python3', '/usr/local/bin/python3', 'python',
+  ].filter(Boolean);
+  for (const c of candidates) {
+    try {
+      const r = spawnSync(c, ['-c', 'import sys;sys.stdout.write("%d.%d" % sys.version_info[:2])'], {
+        encoding: 'utf8', timeout: 8000, windowsHide: true,
+      });
+      if (r.status !== 0) continue;
+      const [maj, min] = String(r.stdout || '').trim().split('.').map(Number);
+      if (maj === 3 && min >= 7) {
+        _pyBinCache = c;
+        console.log('[py] 字幕抓取使用解释器:', c, `(Python ${maj}.${min})`);
+        return c;
+      }
+    } catch { /* 换下一个候选 */ }
+  }
+  _pyBinCache = process.env.PYTHON_BIN || 'python';
+  console.warn('[py] 未找到 Python>=3.7，字幕抓取回退到:', _pyBinCache, '（大概率报 future feature annotations 错误）');
+  return _pyBinCache;
+}
+
 async function handleRegister(body, res) {
   const username = (body.username || '').trim();
   const password = body.password || '';
@@ -3555,7 +3586,7 @@ ${ragText}`;
       try {
         fs.mkdirSync(BILI_WORK_ROOT, { recursive: true });
         const workDir = path.join(BILI_WORK_ROOT, `task_${Date.now()}`);
-        const py = process.env.PYTHON_BIN || 'python';
+        const py = resolvePythonBin();
         const args = [
           path.join(BILI_NOTE_DIR, 'run_bili_note.py'),
           url,
@@ -3580,7 +3611,8 @@ ${ragText}`;
           cp.on('error', reject);
           cp.on('close', (code) => resolve({ stdout: out, stderr: err, code }));
         });
-        console.log('[bili-sub] done', url, 'cost_ms=', Date.now() - t0, 'code=', (stderr || '').includes('error') ? 'see-stderr' : 'ok');
+        console.log('[bili-sub] done', url, 'cost_ms=', Date.now() - t0, 'code=', code, 'py=', py);
+        if (stderr && stderr.trim()) console.warn('[bili-sub] stderr:', stderr.trim().slice(0, 400));
         // 优先按时间窗口裁字幕：从带时间戳的 .subtitle.json（经 manifest 定位）过滤窗口内条目。
         // 这解决「一个P拆多天学」的问题——只把当天应学的时间段喂给大模型。
         let text = '';
