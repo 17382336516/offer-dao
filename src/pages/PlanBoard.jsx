@@ -664,7 +664,22 @@ function PlanBoard() {
       // 与「调整目标日」走同一落库入口，确保页面与数据库一致；失败明确提示，不静默吞掉。
       // 显式把天数传给后端，避免依赖可能缺失的 target_date 兜底写死 30 天。
       generateDailyPlan({ days: effectiveDays })
-        .then(() => { /* 落库成功，下一轮今日计划轮询会刷新 */ })
+        .then(async () => {
+          // 每日任务落库后，后端 GET /plan/integrated 会把真实资源注入 dailyTasks，
+          // 这里立即拉取并刷新页面，避免用户必须手动刷新才能看到学习路线与每日任务。
+          try {
+            const saved = await getSavedIntegratedPlan();
+            if (saved && saved.plan) {
+              setPlanData(saved.plan);
+              setHasGenerated(true);
+              setDbHasPlan(true);
+              if (saved.createdAt) setPlanCreatedAt(saved.createdAt);
+              if (saved.days) updateDays(saved.days);
+            }
+          } catch {
+            /* 拉取失败不阻塞，用户仍可手动刷新 */
+          }
+        })
         .catch((e) => {
           console.error('生成学习路线后自动落库失败:', e.message);
           setPlanError('学习路线已生成，但每日计划落库失败：' + (e.message || '未知错误') + '，请点击「重新生成学习路线」重试。');

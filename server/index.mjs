@@ -1812,21 +1812,29 @@ const server = http.createServer(async (req, res) => {
         const stages = orderedStages.map((stageName, idx) => {
           const skills = (skillsByStage[stageName] || []).map((s) => {
             const skillName = s.standard_name || s.name || '';
-            // 搜索词兜底：searchTerms 来自「本次小红书/面经」提取的趋势词，
-            // 若本次未抓到小红书（未登录/无结果），技能树走内置目录、该字段天然为空，
-            // 会导致能力地图三级全部显示「暂无搜索词」。
-            // 这里用真实技能名兜底（技能名本身就是合法的检索词，不编造内容），
-            // 有趋势词时仍优先展示趋势词。
-            const terms = (Array.isArray(s.searchTerms) && s.searchTerms.length)
-              ? s.searchTerms
-              : [skillName].filter(Boolean);
+            // 三级搜索词分两种来源：
+            //  1) 已抓取小红书/面经 -> searchTerms（实时趋势词，渲染为琥珀色 trend 样式）
+            //  2) 未连接小红书/本次无帖子 -> 用 buildBiliKeywords 生成「技能 -> 学习意图」固定检索词
+            //     （如「RAG原理」「企业知识库搭建」「SQL教程/入门/实战」），这些是 B站真实搜索词，
+            //     不编造内容；渲染为普通样式，与趋势词区分。
+            const hasTrends = Array.isArray(s.searchTerms) && s.searchTerms.length > 0;
+            let keywords = [];
+            if (hasTrends) {
+              keywords = s.searchTerms.map((t) => ({ keyword: t, intent: 'trend', isTrend: true }));
+            } else {
+              const fixed = skillResourceMatcher.buildBiliKeywords({ name: skillName }, job) || [];
+              keywords = fixed.map((k) => ({ keyword: k.keyword, intent: k.intent || 'basic', isTrend: false }));
+              // 意图表也无该技能时，至少显示技能名本身，避免出现「暂无搜索词」空白
+              if (!keywords.length && skillName) {
+                keywords = [{ keyword: skillName, intent: 'basic', isTrend: false }];
+              }
+            }
             return {
               skillName,
               category: s.category,
               level: s.level,
               weight: s.weight,
-              // 个性化搜索词（来自本次小红书/面经），渲染为趋势词样式
-              keywords: terms.map((t) => ({ keyword: t, intent: 'trend', isTrend: true })),
+              keywords,
             };
           });
           return {
