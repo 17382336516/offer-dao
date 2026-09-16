@@ -1197,12 +1197,24 @@ export async function generateIntegratedPlan(keyword, days, storedPosts, opts = 
   const biliCacheStore = makeBiliCacheStore(opts.db);
   const biliSearchCacheStore = makeBiliSearchCacheStore(opts.db);
   stage('matchResources begin');
+  // 注意：原先这里用 .catch(() => 空结果) 静默吞掉异常，导致资源匹配失败时表面"秒完成"、
+  // 实际板块全部无视频/PDF（下游因 EMPTY_RESOURCES 无法生成每日任务），且日志毫无线索。
+  // 现在显式记录失败原因，并保证异常不再外溢中断生成。
   let matched = await skillResourceMatcher.matchResources(
     skillTree,
     { job: keyword, trends: xhsTrends, cacheStore: biliCacheStore, searchCacheStore: biliSearchCacheStore }
-  ).catch(() => ({
-    skills: [], pdfResources: [], videoResources: [], coverage: { missing: [] },
-  }));
+  ).catch((e) => {
+    console.error('[plan] 资源匹配失败（板块将无视频/PDF）, 原因:', (e && e.message) || String(e));
+    return {
+      skills: [], pdfResources: [], videoResources: [], coverage: { missing: [] },
+    };
+  });
+  const _vCount = Array.isArray(matched.videoResources) ? matched.videoResources.length : 0;
+  const _pCount = Array.isArray(matched.pdfResources) ? matched.pdfResources.length : 0;
+  console.log(`[plan] 资源匹配结果: 视频=${_vCount} PDF=${_pCount}`);
+  if (!_vCount && !_pCount) {
+    console.error('[plan] 警告: 本次未匹配到任何资源（视频与PDF均为0），板块将没有学习资料');
+  }
   stage('matchResources done');
 
   // 预算裁剪接入：让 Learning Budget 真正约束最终学习计划（仅排期层，不动匹配逻辑）。
