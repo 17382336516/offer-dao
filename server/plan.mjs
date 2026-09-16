@@ -1752,6 +1752,25 @@ export function putBiliSearchCacheRow(db, keyword, results) {
   }
 }
 
+// ---------- 固定视频库（锁定的真实 B站视频）----------
+// 文件：data/bili_video_library.json，结构 { "<技能名>": [{ bvid, title, url, author, duration }] }
+// 由 deploy/import-bili-cache.mjs 从真实搜索缓存生成；缺失或为空时自动回落到原实时搜索。
+let _videoLibrary = undefined;
+function getLockedVideos(skill) {
+  if (!skill) return [];
+  if (_videoLibrary === undefined) {
+    try {
+      const p = path.join(__dirname, '..', 'data', 'bili_video_library.json');
+      _videoLibrary = fs.existsSync(p) ? JSON.parse(fs.readFileSync(p, 'utf8')) : {};
+      if (!_videoLibrary || typeof _videoLibrary !== 'object') _videoLibrary = {};
+    } catch {
+      _videoLibrary = {};
+    }
+  }
+  const list = _videoLibrary[String(skill).trim()];
+  return Array.isArray(list) ? list : [];
+}
+
 // durationMin 默认 10 分钟（600s）：优先选超长深度教程，逐级向上偏好更长，
 // 最低档 10 分钟——过短碎片（<10min）不进候选。年份默认 6 年，覆盖更多系统课。
 // searchCacheStore：搜索结果短缓存（bilibili_search_cache）注入，命中且 TTL 内则跳过 B站搜索 HTTP；
@@ -1763,6 +1782,26 @@ export async function searchBilibiliVideos(keyword, { durationMin = 600, topN = 
     const parts = String(d || '0').split(':').map(Number);
     return parts.reduce((acc, n) => acc * 60 + (isNaN(n) ? 0 : n), 0);
   };
+
+  // —— 固定视频库优先 ——
+  // 背景：B站「搜索接口」对服务器（数据中心）IP 有风控，实时搜索恒返回空，导致计划里没有视频。
+  // 而视频详情(view)与字幕(player/v2)接口正常，因此把预先抓取并锁定的真实视频按技能存为
+  // data/bili_video_library.json，命中即直接复用，跳过被风控的搜索环节。
+  // 实时搜索逻辑【保留不删除】，仅在库里没有该技能时才走原链路。
+  const libList = getLockedVideos(skill);
+  if (libList.length) {
+    console.log(`[bili-search] 命中固定视频库 skill="${skill}" 条数=${libList.length}`);
+    return libList.map((v) => ({
+      title: String(v.title || ''),
+      bvid: v.bvid,
+      link: v.url || (v.bvid ? `https://www.bilibili.com/video/${v.bvid}` : ''),
+      durationSec: Number(v.duration || 0),
+      author: v.author || '',
+      play: 0,
+      favorite: 0,
+    })).filter((v) => v.bvid && v.link);
+  }
+
   let mapped = [];
   // —— 搜索缓存短路：24h 内相同关键词直接复用，省一次 B站搜索 HTTP ——
   const cached = searchCacheStore ? searchCacheStore.get(keyword) : null;

@@ -48,7 +48,46 @@ for (const v of videos) {
   }
 }
 
+// 生成固定视频库文件：按技能取评分最高的若干条，供 searchBilibiliVideos 优先命中
+// （绕过被风控的 B站搜索接口；库里没有该技能时仍走原实时搜索逻辑）
+const LIB_PER_SKILL = Number(process.env.BILI_LIB_PER_SKILL || 15);
+const scoreOf = (v) => {
+  try {
+    const s = typeof v.score_json === 'string' ? JSON.parse(v.score_json) : (v.score_json || {});
+    const n = (x) => Number(x) || 0;
+    return n(s.titleMatch) + n(s.learning_quality) + n(s.jobFitScore) + n(s.trend_match) + n(s.duration);
+  } catch {
+    return 0;
+  }
+};
+const grouped = {};
+for (const v of (T.bilibili_resource_cache || [])) {
+  if (!v || !v.skill || !v.bvid) continue;
+  (grouped[v.skill] = grouped[v.skill] || []).push(v);
+}
+const library = {};
+for (const [skill, arr] of Object.entries(grouped)) {
+  const top = arr
+    .slice()
+    .sort((a, b) => scoreOf(b) - scoreOf(a))
+    .slice(0, LIB_PER_SKILL)
+    .map((v) => ({
+      bvid: v.bvid,
+      title: v.title || '',
+      url: v.url || `https://www.bilibili.com/video/${v.bvid}`,
+      author: v.author || '',
+      duration: Number(v.duration) || 0,
+    }));
+  if (top.length) library[skill] = top;
+}
+const libPath = path.join(APP_DIR, 'data', 'bili_video_library.json');
+fs.mkdirSync(path.dirname(libPath), { recursive: true });
+fs.writeFileSync(libPath, JSON.stringify(library, null, 2), 'utf8');
+
 const T = db.state.tables;
+console.log('\n固定视频库已生成:', libPath);
+console.log('  技能数:', Object.keys(library).length, '| 每技能上限:', LIB_PER_SKILL);
+console.log('  视频总数:', Object.values(library).reduce((s, a) => s + a.length, 0));
 console.log('\n===== 导入完成 =====');
 console.log(`搜索缓存: 成功 ${sOk} / 失败 ${sFail}  (库内现有 ${(T.bilibili_search_cache || []).length} 条)`);
 console.log(`评分缓存: 成功 ${vOk} / 失败 ${vFail}  (库内现有 ${(T.bilibili_resource_cache || []).length} 条)`);
