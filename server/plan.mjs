@@ -1493,6 +1493,24 @@ async function hasBiliPublicSubtitle(bvid, cid, meta = {}) {
   return usable.ok;
 }
 
+// 笔记生成阶段发现「缓存标记有字幕、实际抓不到」时调用：
+// 把该 (bvid, skill) 的缓存字幕状态改判为 none，下次生成学习计划不再收录它（自愈）。
+// 原因：字幕状态只在生成计划那一刻校验一次并缓存 30 天，之后 B站可能下线字幕 / AI 字幕
+// 不再下发 / 触发风控，导致计划里有它、生成笔记时却拿不到素材。
+export function markBiliSubtitleUnavailable(db, bvid, skill) {
+  if (!db || !bvid || !skill) return false;
+  try {
+    const row = getBiliResourceCacheRow(db, bvid, skill);
+    if (!row || row.subtitleStatus === 'none') return false;
+    putBiliResourceCacheRow(db, { ...row, subtitleStatus: 'none', checkedTime: Date.now() });
+    console.warn(`[plan] 视频 ${bvid} 实际抓不到字幕，缓存已改判 none（下次生成计划不再收录）`);
+    return true;
+  } catch (e) {
+    console.warn('[plan] 标记字幕不可用失败:', e.message);
+    return false;
+  }
+}
+
 // 综合热度：播放量 + 收藏量（收藏权重更高，更能反映学习价值）
 const heat = (v) => (v.play || 0) + (v.favorite || 0) * 5;
 

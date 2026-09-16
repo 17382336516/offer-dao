@@ -3568,7 +3568,7 @@ ${ragText}`;
       if (!text || !text.trim()) return;
       _subtitleCache.set(key, text);
     }
-    async function extractBiliSubtitles(url, part, rangeSec, page) {
+    async function extractBiliSubtitles(url, part, rangeSec, page, skill) {
       if (!url) return '';
       // 测试模式：不走 Python/网络抓取，返回确定性占位字幕，避免外部依赖与耗时。
       if (process.env.NOTE_LLM_MOCK === '1' || process.env.LLM_MOCK === '1') {
@@ -3630,6 +3630,9 @@ ${ragText}`;
         }
         if (!text.trim()) {
           console.warn('[note] bili 字幕提取为空（可能无公开字幕或网络受限）：', stderr.slice(0, 200));
+          // 自愈：该视频实际拿不到字幕，把缓存里的 subtitle_status 改判为 none，
+          // 下次生成学习计划时不再收录它（缓存只校验一次，字幕可能已被下线/风控）。
+          try { plan.markBiliSubtitleUnavailable(db, bvid, skill); } catch (e) { /* 忽略 */ }
         } else {
           _setSubtitleCache(key, bvid, part, text.trim());
         }
@@ -3684,8 +3687,8 @@ ${ragText}`;
 
     // —— 分P级字幕抓取：只抓单个分P 的字幕（用于逐P 相关性过滤）——
     // 复用 extractBiliSubtitles 的缓存/Python 链路，part 传单个页码字符串（如 "3"）。
-    async function extractBiliSubtitlesSinglePart(url, partNo) {
-      return extractBiliSubtitles(url, String(partNo));
+    async function extractBiliSubtitlesSinglePart(url, partNo, skill) {
+      return extractBiliSubtitles(url, String(partNo), null, null, skill);
     }
 
     // —— 分P 相关性过滤缓存（进程内）——
@@ -3757,7 +3760,7 @@ ${ragText}`;
       if (!anchor || !partList.length) {
         // 无锚定主题（理论上不应发生）→ 全部保留，依赖 Prompt 兜底
         for (const p of partList) {
-          const text = await extractBiliSubtitlesSinglePart(url, p);
+          const text = await extractBiliSubtitlesSinglePart(url, p, skill);
           scored.push({ partNo: p, relevance_score: 1, keep: true });
           if (text) keptParts.push({ partNo: p, text });
         }
@@ -3768,7 +3771,7 @@ ${ragText}`;
       const partTitles = await extractBiliPartTitles(url).catch(() => ({}));
       const partTexts = [];
       for (const p of partList) {
-        const sub = await extractBiliSubtitlesSinglePart(url, p);
+        const sub = await extractBiliSubtitlesSinglePart(url, p, skill);
         // 字幕优先；字幕为空时回退到分P标题（标题游客态可访问，几乎必通）
         const title = partTitles[`P${p}`] || '';
         const text = (sub && sub.trim()) ? sub.trim() : title;
@@ -4790,7 +4793,9 @@ ${ragText}`;
             const t = await extractBiliSubtitles(
               info.url,
               info.page ? String(info.page) : '',
-              partSpec.rangeSec
+              partSpec.rangeSec,
+              null,
+              noteSkill
             );
             if (t) videoNotes += `\n【视频 ${info.url || ''} ${partStr}】\n${t}\n`;
             doneJobs++;
@@ -4799,7 +4804,7 @@ ${ragText}`;
           }
           if (partSpec.kind === 'all') {
             // 未指定分P（整视频）→ 直接抓取整段，不过滤
-            const t = await extractBiliSubtitles(info.url, '');
+            const t = await extractBiliSubtitles(info.url, '', null, null, noteSkill);
             if (t) videoNotes += `\n【视频 ${info.url || ''} ${partStr || ''}】\n${t}\n`;
             doneJobs++;
             setProgress('extract', 15 + Math.round((doneJobs / Math.max(totalJobs, 1)) * 45), `正在提取视频字幕（${doneJobs}/${totalJobs}）…`);
