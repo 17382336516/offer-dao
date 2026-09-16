@@ -1034,7 +1034,8 @@ function resolvePythonBin() {
   const candidates = [
     process.env.PYTHON_BIN,
     'python3', 'python3.12', 'python3.11', 'python3.10', 'python3.9', 'python3.8', 'python3.7',
-    '/usr/bin/python3', '/usr/local/bin/python3', 'python',
+    'python39', 'python38', 'python37',
+    '/usr/bin/python3', '/usr/local/bin/python3', '/usr/bin/python3.9', '/usr/local/bin/python3.9', 'python',
   ].filter(Boolean);
   for (const c of candidates) {
     try {
